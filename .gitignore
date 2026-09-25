@@ -1,0 +1,35 @@
+# Dependências
+node_modules/
+
+# Builds e cobertura
+dist/
+coverage/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Ambiente e chaves (nunca versionar)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Claude Code (estado local)
+.claude/settings.local.json
+.claude/state/
+.claude/sessions/
+.claude/worktrees/
+
+# Temporários
+*.tmp
+*.bak

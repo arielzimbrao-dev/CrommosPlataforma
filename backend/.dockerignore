@@ -1,0 +1,24 @@
+# Contexto de build = esta pasta de serviço (Coolify Base Directory = este dir).
+# Mantenha o contexto enxuto; as deps são reinstaladas do package-lock.json na imagem.
+node_modules
+dist
+coverage
+.git
+.gitignore
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+*.swp
+.cache
+docker-compose*.yml
+docker-compose*.yaml
+Dockerfile
+.dockerignore
+README.md
+tests
