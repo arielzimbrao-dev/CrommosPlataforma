@@ -25,7 +25,10 @@ process.env.DB_USERNAME ??= 'postgres';
 process.env.DB_PASSWORD ??= 'postgres';
 process.env.DB_NAME ??= 'plat_test';
 process.env.CLINIC_API_URL ??= 'http://127.0.0.1:9';
-process.env.SERVICO_KEY_CLINIC ??= 'chave-de-servico-do-clinic-para-testes-000000';
+process.env.SERVICO_KEY_CLINIC ??=
+  'chave-de-servico-do-clinic-para-testes-000000';
 process.env.ODONTO_API_URL ??= 'http://127.0.0.1:9';
-process.env.SERVICO_KEY_ODONTO ??= 'chave-de-servico-do-odonto-para-testes-000000';
-process.env.PLATAFORMA_API_KEY ??= 'chave-da-plataforma-para-testes-0123456789abcdef';
+process.env.SERVICO_KEY_ODONTO ??=
+  'chave-de-servico-do-odonto-para-testes-000000';
+process.env.PLATAFORMA_API_KEY ??=
+  'chave-da-plataforma-para-testes-0123456789abcdef';

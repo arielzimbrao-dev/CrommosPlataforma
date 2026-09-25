@@ -1,0 +1,419 @@
+import { INestApplication } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { randomUUID } from 'node:crypto';
+import request from 'supertest';
+import { DataSource } from 'typeorm';
+import { Acesso } from 'src/auth/acesso.entity';
+import { gerarConfirmacaoEmail } from 'src/auth/tokens';
+import { Usuario } from 'src/auth/usuario.entity';
+import { normalizarPem } from 'src/auth/chaves-jwt';
+import {
+  criarApp,
+  fecharApp,
+  limparBanco,
+  mailFalso,
+  ultimo,
+} from './support/app';
+import {
+  cookieRefresh,
+  criarAcesso,
+  criarAssinatura,
+  criarPessoa,
+  SENHA,
+} from './support/dados';
+
+/**
+ * Login único ponta a ponta contra o Postgres (RUN_DB_TESTS=true): login,
+ * escolha de clínica, refresh com rotação e reuso, logout, senha e
+ * confirmação de e-mail.
+ */
+const describeDb =
+  process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
+
+describeDb('Auth (integração)', () => {
+  let app: INestApplication;
+  let ds: DataSource;
+  const mail = mailFalso();
+  const T1 = randomUUID();
+  const T2 = randomUUID();
+  const T_ODONTO = randomUUID();
+  let ana: Usuario; // um acesso (T1)
+  let bia: Usuario; // dois acessos (T1, T2)
+
+  jest.setTimeout(60_000);
+
+  beforeAll(async () => {
+    ({ app, ds } = await criarApp(mail));
+    await limparBanco(ds);
+    await criarAssinatura(ds, {
+      tenantId: T1,
+      tenantCodigo: 'AAAA1',
+      tenantNome: 'Clínica Zeta',
+    });
+    await criarAssinatura(ds, {
+      tenantId: T2,
+      tenantCodigo: 'BBBB2',
+      tenantNome: 'Clínica Alfa',
+    });
+    await criarAssinatura(ds, { tenantId: T_ODONTO, produto: 'odonto' });
+    ana = await criarPessoa(ds, { email: 'ana@exemplo.com', nome: 'Ana' });
+    bia = await criarPessoa(ds, { email: 'bia@exemplo.com', nome: 'Bia' });
+    await criarAcesso(ds, { usuarioId: ana.id, tenantId: T1 });
+    await criarAcesso(ds, { usuarioId: bia.id, tenantId: T1, papel: 'gestor' });
+    await criarAcesso(ds, { usuarioId: bia.id, tenantId: T2 });
+    await criarAcesso(ds, {
+      usuarioId: bia.id,
+      tenantId: T_ODONTO,
+      produto: 'odonto',
+    });
+  });
+
+  afterAll(() => fecharApp(app));
+
+  const login = (body: Record<string, unknown>) =>
+    request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ password: SENHA, produto: 'clinic', ...body });
+
+  describe('login', () => {
+    it('um acesso ativo → sessão, cookie crommos_rt httpOnly em /auth e token RS256 com as claims do contrato', async () => {
+      const res = await login({ email: 'ANA@exemplo.com' }).expect(200);
+      expect(res.body.pessoa).toEqual({
+        id: ana.id,
+        nome: 'Ana',
+        email: 'ana@exemplo.com',
+      });
+      expect(res.body.acesso).toEqual({
+        produto: 'clinic',
+        tenantId: T1,
+        papel: 'admin',
+      });
+      const cookie = (res.headers['set-cookie'] as unknown as string[])[0];
+      expect(cookie).toMatch(/^crommos_rt=/);
+      expect(cookie).toMatch(/HttpOnly/);
+      expect(cookie).toMatch(/Path=\/auth/);
+
+      const claims = new JwtService().verify<Record<string, unknown>>(
+        res.body.accessToken,
+        {
+          publicKey: normalizarPem(process.env.PLATAFORMA_JWT_PUBLIC_KEY!),
+          algorithms: ['RS256'],
+        },
+      );
+      expect(claims).toMatchObject({
+        sub: ana.id,
+        produto: 'clinic',
+        tenantId: T1,
+        typ: 'access',
+      });
+      expect(claims).not.toHaveProperty('papel');
+      expect(Number(claims.exp) - Number(claims.iat)).toBe(15 * 60);
+    });
+
+    it('mais de um acesso sem tenantId → escolherClinica (ordenada), sem token nem cookie', async () => {
+      const res = await login({ email: 'bia@exemplo.com' }).expect(200);
+      expect(res.body).toEqual({
+        escolherClinica: [
+          { tenantId: T2, codigo: 'BBBB2', nome: 'Clínica Alfa' },
+          { tenantId: T1, codigo: 'AAAA1', nome: 'Clínica Zeta' },
+        ],
+      });
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('tenantId por código (sem diferenciar maiúsculas) ou UUID', async () => {
+      const porCodigo = await login({
+        email: 'bia@exemplo.com',
+        tenantId: 'aaaa1',
+      }).expect(200);
+      expect(porCodigo.body.acesso).toEqual({
+        produto: 'clinic',
+        tenantId: T1,
+        papel: 'gestor',
+      });
+      const porUuid = await login({
+        email: 'bia@exemplo.com',
+        tenantId: T2,
+      }).expect(200);
+      expect(porUuid.body.acesso.tenantId).toBe(T2);
+    });
+
+    it('401 genérico: senha errada, e-mail inexistente, código inexistente, tenant sem acesso', async () => {
+      const casos = [
+        { email: 'ana@exemplo.com', password: 'outra-senha-1' },
+        { email: 'ninguem@exemplo.com' },
+        { email: 'ana@exemplo.com', tenantId: 'ZZZZ9' },
+        { email: 'ana@exemplo.com', tenantId: T2 },
+      ];
+      for (const c of casos) {
+        const res = await login(c).expect(401);
+        expect(res.body.message).toBe('Credenciais inválidas.');
+      }
+    });
+
+    it('produto: acesso só em outro produto → 401; o tenant do odonto só entra pelo odonto', async () => {
+      await login({ email: 'ana@exemplo.com', produto: 'odonto' }).expect(401);
+      await login({ email: 'bia@exemplo.com', tenantId: T_ODONTO }).expect(401);
+      const res = await login({
+        email: 'bia@exemplo.com',
+        produto: 'odonto',
+      }).expect(200);
+      expect(res.body.acesso).toMatchObject({
+        produto: 'odonto',
+        tenantId: T_ODONTO,
+      });
+    });
+
+    it('produto não configurado → 400; produto inválido → 400', async () => {
+      await login({ email: 'ana@exemplo.com', produto: 'vet' }).expect(400);
+      await login({ email: 'ana@exemplo.com', produto: 'x' }).expect(400);
+    });
+
+    it('acesso inativo não entra', async () => {
+      const p = await criarPessoa(ds, { email: 'inativo@exemplo.com' });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1, ativo: false });
+      await login({ email: 'inativo@exemplo.com' }).expect(401);
+    });
+  });
+
+  describe('refresh e logout', () => {
+    it('rotaciona: o refresh novo vale; reapresentar o antigo (reuso) revoga todas as sessões da pessoa', async () => {
+      const l = await login({ email: 'ana@exemplo.com' }).expect(200);
+      const c1 = cookieRefresh(l.headers);
+
+      const r1 = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', c1)
+        .expect(200);
+      expect(r1.body.acesso).toEqual({
+        produto: 'clinic',
+        tenantId: T1,
+        papel: 'admin',
+      });
+      expect(r1.body.pessoa.id).toBe(ana.id);
+      const c2 = cookieRefresh(r1.headers);
+      expect(c2).not.toBe(c1);
+
+      // Reuso do c1 (já rotacionado): 401 e revoga tudo (inclusive o c2).
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', c1)
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', c2)
+        .expect(401);
+      const [{ n }] = await ds.query(
+        `SELECT count(*)::int AS n FROM crommos.auditoria
+          WHERE usuario_id = $1 AND action = 'refresh-reutilizado'`,
+        [ana.id],
+      );
+      expect(n).toBeGreaterThanOrEqual(1);
+    });
+
+    it('sem cookie ou com lixo → 401', async () => {
+      await request(app.getHttpServer()).post('/auth/refresh').expect(401);
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', 'crommos_rt=lixo')
+        .expect(401);
+    });
+
+    it('acesso desativado depois do login → o refresh falha', async () => {
+      const p = await criarPessoa(ds, { email: 'desativar@exemplo.com' });
+      const acesso = await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      const l = await login({ email: 'desativar@exemplo.com' }).expect(200);
+      await ds
+        .getRepository(Acesso)
+        .update({ id: acesso.id }, { ativo: false });
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookieRefresh(l.headers))
+        .expect(401);
+    });
+
+    it('logout revoga a sessão (204 sempre) e limpa o cookie', async () => {
+      const l = await login({ email: 'ana@exemplo.com' }).expect(200);
+      const c = cookieRefresh(l.headers);
+      const out = await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', c)
+        .expect(204);
+      expect(String(out.headers['set-cookie'])).toMatch(/crommos_rt=;/);
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', c)
+        .expect(401);
+      // Sem cookie / repetido: continua 204.
+      await request(app.getHttpServer()).post('/auth/logout').expect(204);
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', c)
+        .expect(204);
+    });
+  });
+
+  describe('senha', () => {
+    it('forgot → 202 sempre; reset define a senha, fecha convites e revoga as sessões', async () => {
+      const p = await criarPessoa(ds, { email: 'reset@exemplo.com' });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      await criarAcesso(ds, {
+        usuarioId: p.id,
+        tenantId: T2,
+        convitePendente: true,
+      });
+      const l = await login({
+        email: 'reset@exemplo.com',
+        tenantId: T1,
+      }).expect(200);
+
+      await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({ email: 'naoexiste@exemplo.com' })
+        .expect(202);
+      expect(mail.sendPasswordReset).not.toHaveBeenCalled();
+      await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({ email: 'RESET@exemplo.com' })
+        .expect(202);
+      const token = ultimo(mail.sendPasswordReset, 1);
+
+      await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .send({ token, password: 'fraca' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .send({ token, password: 'nova-senha-456' })
+        .expect(204);
+      // Uso único.
+      await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .send({ token, password: 'nova-senha-789' })
+        .expect(401);
+
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookieRefresh(l.headers))
+        .expect(401);
+      const pendentes = await ds
+        .getRepository(Acesso)
+        .count({ where: { usuarioId: p.id, convitePendente: true } });
+      expect(pendentes).toBe(0);
+      await login({
+        email: 'reset@exemplo.com',
+        tenantId: T1,
+        password: 'nova-senha-456',
+      }).expect(200);
+    });
+
+    it('forgot: falha no envio não muda a resposta; pessoa sem acesso ativo não recebe', async () => {
+      mail.sendPasswordReset.mockRejectedValueOnce(new Error('smtp'));
+      await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({ email: 'ana@exemplo.com' })
+        .expect(202);
+      const p = await criarPessoa(ds, { email: 'semacesso@exemplo.com' });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1, ativo: false });
+      mail.sendPasswordReset.mockClear();
+      await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({ email: 'semacesso@exemplo.com' })
+        .expect(202);
+      expect(mail.sendPasswordReset).not.toHaveBeenCalled();
+    });
+
+    it('trocar-senha: 400 com a atual errada; sucesso abre sessão nova e derruba as outras', async () => {
+      const p = await criarPessoa(ds, { email: 'troca@exemplo.com' });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      const l = await login({ email: 'troca@exemplo.com' }).expect(200);
+      const auth = `Bearer ${l.body.accessToken}`;
+
+      await request(app.getHttpServer())
+        .post('/auth/trocar-senha')
+        .send({ senhaAtual: SENHA, novaSenha: 'outra-senha-1' })
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/auth/trocar-senha')
+        .set('Authorization', auth)
+        .send({ senhaAtual: 'errada-123', novaSenha: 'outra-senha-1' })
+        .expect(400);
+      const ok = await request(app.getHttpServer())
+        .post('/auth/trocar-senha')
+        .set('Authorization', auth)
+        .send({ senhaAtual: SENHA, novaSenha: 'outra-senha-1' })
+        .expect(200);
+      expect(ok.body.acesso.tenantId).toBe(T1);
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookieRefresh(l.headers))
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookieRefresh(ok.headers))
+        .expect(200);
+    });
+
+    it('refresh token não autentica rota (typ)', async () => {
+      const l = await login({ email: 'ana@exemplo.com' }).expect(200);
+      const refresh = cookieRefresh(l.headers).split('=')[1];
+      await request(app.getHttpServer())
+        .post('/auth/reenviar-confirmacao')
+        .set('Authorization', `Bearer ${refresh}`)
+        .expect(401);
+    });
+  });
+
+  describe('confirmação de e-mail', () => {
+    it('link válido confirma e redireciona com 1; inválido/usado com 0', async () => {
+      const { token, campos } = gerarConfirmacaoEmail();
+      const p = await criarPessoa(ds, {
+        email: 'confirma@exemplo.com',
+        ...campos,
+      });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+
+      const ok = await request(app.getHttpServer())
+        .get(`/auth/confirmar-email?token=${token}`)
+        .expect(302);
+      expect(ok.headers.location).toMatch(/\/login\?emailConfirmado=1$/);
+      const de_novo = await request(app.getHttpServer())
+        .get(`/auth/confirmar-email?token=${token}`)
+        .expect(302);
+      expect(de_novo.headers.location).toMatch(/emailConfirmado=0$/);
+      const sem = await request(app.getHttpServer())
+        .get('/auth/confirmar-email')
+        .expect(302);
+      expect(sem.headers.location).toMatch(/emailConfirmado=0$/);
+    });
+
+    it('reenviar-confirmacao: 204 com link novo; 409 se já confirmado', async () => {
+      const { campos } = gerarConfirmacaoEmail();
+      const p = await criarPessoa(ds, {
+        email: 'reenvio@exemplo.com',
+        ...campos,
+      });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      const l = await login({ email: 'reenvio@exemplo.com' }).expect(200);
+      const auth = `Bearer ${l.body.accessToken}`;
+      await request(app.getHttpServer())
+        .post('/auth/reenviar-confirmacao')
+        .set('Authorization', auth)
+        .expect(204);
+      const token = ultimo(mail.sendConfirmacaoEmail, 1);
+      await request(app.getHttpServer())
+        .get(`/auth/confirmar-email?token=${token}`)
+        .expect(302);
+      await request(app.getHttpServer())
+        .post('/auth/reenviar-confirmacao')
+        .set('Authorization', auth)
+        .expect(409);
+    });
+  });
+
+  it('health responde sem token', async () => {
+    await request(app.getHttpServer())
+      .get('/health')
+      .expect(200, { status: 'ok', service: 'plataforma-api' });
+  });
+});

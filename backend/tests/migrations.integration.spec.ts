@@ -1,15 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'node:crypto';
-import { Client } from 'pg';
+import { DataSource } from 'typeorm';
 import {
   diretorioMigrations,
   lerMigrations,
 } from 'src/database/database.providers';
-import {
-  aplicarMigrations,
-  ExecutorSql,
-} from 'src/database/migrations-runner';
+import { aplicarMigrations, ExecutorSql } from 'src/database/migrations-runner';
 
 /**
  * Migrations da plataforma contra um Postgres real, no banco `plat_int`
@@ -22,7 +19,8 @@ import {
  *  3. o mesmo com um retrato do schema do Clinic (tests/fixtures), para o CI
  *     sem o repositório do Clinic.
  */
-const describeDb = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
+const describeDb =
+  process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
 
 const BANCO = process.env.DB_NAME_INT ?? 'plat_int';
 const DIR_CLINIC =
@@ -33,23 +31,33 @@ const CONTROLE_CLINIC = { tabela: 'public._sql_migrations', lock: 72_460_001 };
 const TABELAS_COMUNS = ['clientes', 'usuarios', 'assinaturas', 'faturas'];
 const silencio = () => undefined;
 
-async function conectar(searchPath: string): Promise<Client> {
-  const c = new Client({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USERNAME,
-    password: process.env.DB_PASSWORD,
-    database: BANCO,
-    options: `-c search_path=${searchPath}`,
-  });
-  await c.connect();
-  return c;
+interface Conexao extends ExecutorSql {
+  query<T = any>(sql: string, params?: unknown[]): Promise<T>;
+  end(): Promise<void>;
 }
 
-/** Executor do runner sobre o `pg` (devolve as linhas, como o TypeORM). */
-const executor = (c: Client): ExecutorSql => ({
-  query: (sql, params) => c.query(sql, params).then((r) => r.rows),
-});
+/** Uma conexão só (o runner exige: lock e transação são de sessão). */
+async function conectar(searchPath: string): Promise<Conexao> {
+  const ds = await new DataSource({
+    type: 'postgres',
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT),
+    username: process.env.DB_USERNAME,
+    password: process.env.DB_PASSWORD,
+    database: BANCO,
+    extra: { options: `-c search_path=${searchPath}`, max: 1 },
+  }).initialize();
+  const qr = ds.createQueryRunner();
+  await qr.connect();
+  return {
+    // Sem parâmetros o `pg` usa o protocolo simples (vários statements).
+    query: (sql, params) => (params ? qr.query(sql, params) : qr.query(sql)),
+    end: async () => {
+      await qr.release();
+      await ds.destroy();
+    },
+  };
+}
 
 async function resetar(): Promise<void> {
   const c = await conectar('public');
@@ -67,7 +75,7 @@ async function migrarPlataforma(): Promise<string[]> {
   const c = await conectar('crommos,public');
   try {
     return await aplicarMigrations(
-      executor(c),
+      c,
       lerMigrations(diretorioMigrations()),
       undefined,
       silencio,
@@ -82,7 +90,9 @@ async function migrarPlataforma(): Promise<string[]> {
  * `comDefinicao = false` compara as constraints só por nome e tipo (o
  * pg_dump regrava o texto dos CHECK com outros casts, mesma semântica).
  */
-async function estrutura(comDefinicao = true): Promise<Record<string, unknown>> {
+async function estrutura(
+  comDefinicao = true,
+): Promise<Record<string, unknown>> {
   const c = await conectar('public');
   try {
     const colunas = await c.query(
@@ -109,9 +119,9 @@ async function estrutura(comDefinicao = true): Promise<Record<string, unknown>> 
       [TABELAS_COMUNS],
     );
     return {
-      colunas: colunas.rows,
-      constraints: constraints.rows,
-      indices: indices.rows,
+      colunas,
+      constraints,
+      indices,
     };
   } finally {
     await c.end();
@@ -173,7 +183,7 @@ async function conferirBackfill(): Promise<void> {
       `SELECT usuario_id, produto, tenant_id, papel, ativo, convite_pendente
          FROM crommos.acessos ORDER BY papel`,
     );
-    expect(acessos.rows).toEqual([
+    expect(acessos).toEqual([
       {
         usuario_id: U1,
         produto: 'clinic',
@@ -203,14 +213,14 @@ async function conferirBackfill(): Promise<void> {
       `SELECT tenant_id, tenant_nome, tenant_codigo FROM crommos.assinaturas
         ORDER BY tenant_codigo`,
     );
-    expect(tenants.rows).toEqual([
+    expect(tenants).toEqual([
       { tenant_id: T1, tenant_nome: 'Fantasia Um', tenant_codigo: 'ABCDE' },
       { tenant_id: T2, tenant_nome: 'Razão Dois', tenant_codigo: 'FGHJK' },
     ]);
     // O Clinic segue com o controle dele intocado.
-    const [{ n }] = (
-      await c.query(`SELECT count(*)::int AS n FROM public._sql_migrations`)
-    ).rows as { n: number }[];
+    const [{ n }] = await c.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM public._sql_migrations`,
+    );
     expect(n).toBeGreaterThan(0);
   } finally {
     await c.end();
@@ -237,11 +247,11 @@ describeDb('Migrations da plataforma (plat_int)', () => {
 
     const c = await conectar('public');
     try {
-      const { rows } = await c.query(
+      const rows = await c.query<{ table_name: string }[]>(
         `SELECT table_name FROM information_schema.tables
           WHERE table_schema = 'crommos' ORDER BY 1`,
       );
-      expect(rows.map((r: { table_name: string }) => r.table_name)).toEqual([
+      expect(rows.map((r) => r.table_name)).toEqual([
         '_migrations',
         'acessos',
         'assinaturas',
@@ -252,11 +262,11 @@ describeDb('Migrations da plataforma (plat_int)', () => {
         'usuarios',
       ]);
       // Nada fora do crommos.
-      const fora = await c.query(
+      const [fora] = await c.query<{ n: number }[]>(
         `SELECT count(*)::int AS n FROM information_schema.tables
           WHERE table_schema = 'public'`,
       );
-      expect(fora.rows[0].n).toBe(0);
+      expect(fora.n).toBe(0);
     } finally {
       await c.end();
     }
@@ -270,7 +280,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
       const c = await conectar('clinic,crommos,public');
       try {
         await aplicarMigrations(
-          executor(c),
+          c,
           lerMigrations(DIR_CLINIC),
           CONTROLE_CLINIC,
           silencio,
