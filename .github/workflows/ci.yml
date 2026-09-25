@@ -1,0 +1,62 @@
+name: CI
+
+# PRs e pushes nas branches principais. O deploy é do Coolify (fora daqui).
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (NestJS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    # Postgres de serviço para a integração (Supertest + migrations).
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: plat_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d plat_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      # Banco da compatibilidade com o schema do Clinic (migrations.integration).
+      - name: Banco plat_int
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -c 'CREATE DATABASE plat_int'
+      - run: npm ci
+      - run: npm run lint:check
+      - run: npm run typecheck
+      - run: npm run build
+      # test:unit coleta a cobertura e aplica o gate de 85% (jest.config.ts).
+      # As chaves RS256 dos testes são geradas na hora (tests/setup-env.ts).
+      - run: npm run test:unit
+        env:
+          NODE_ENV: test
+          RUN_DB_TESTS: 'true'
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: plat_test

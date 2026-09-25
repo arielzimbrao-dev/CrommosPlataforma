@@ -1,0 +1,32 @@
+# Postgres local para desenvolvimento e testes da plataforma-api.
+#
+# Uso (a partir de backend/):
+#   docker compose up -d        # sobe o Postgres em background
+#   npm run start:dev           # a app conecta lendo as DB_* do .env
+#   docker compose down         # para (mantém os dados no volume)
+#
+# Em produção o Postgres é o mesmo do Clinic (Coolify), com o schema crommos.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crommos-plataforma-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-plataforma_db}
+      TZ: ${TZ:-America/Sao_Paulo}
+    ports:
+      - '${DB_PORT:-5432}:5432'
+    volumes:
+      - plataforma_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-plataforma_db}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  plataforma_pgdata:
+    name: crommos-plataforma-pgdata
