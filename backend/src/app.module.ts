@@ -5,6 +5,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { BillingModule } from './billing/billing.module';
 import { AllExceptionsFilter } from './common/exceptions/all-exceptions.filter';
 import { HealthController } from './common/health/health.controller';
 import { validateEnv } from './config/env.validation';
@@ -26,6 +27,7 @@ import { MailModule } from './mail/mail.module';
     AuditModule,
     MailModule,
     AuthModule,
+    BillingModule,
   ],
   controllers: [HealthController],
   providers: [

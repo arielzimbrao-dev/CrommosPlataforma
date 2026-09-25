@@ -1,0 +1,29 @@
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import { DataSource } from 'typeorm';
+import { comLockGlobal } from '../common/lock-global';
+import { AssinaturaService } from './assinatura.service';
+
+/**
+ * Renovação diária dos ciclos vencidos (gera a fatura `ciclo`). Com várias
+ * réplicas, só a que obtiver o lock global processa a rodada. O nome do lock
+ * é o mesmo do Clinic de propósito: durante a transição, nunca as duas APIs
+ * renovam ao mesmo tempo.
+ */
+@Injectable()
+export class RenovacaoCron {
+  private readonly logger = new Logger('RenovacaoCron');
+
+  constructor(
+    private readonly assinaturas: AssinaturaService,
+    @Inject('DATA_SOURCE') private readonly ds: DataSource,
+  ) {}
+
+  @Cron('0 3 * * *', { timeZone: 'America/Sao_Paulo' })
+  async run(): Promise<void> {
+    const n = await comLockGlobal(this.ds, 'billing-renovacao', () =>
+      this.assinaturas.renovarVencidas(),
+    );
+    if (n) this.logger.log(`Faturas de renovação geradas: ${n}`);
+  }
+}
