@@ -11,6 +11,7 @@ import { HealthController } from './common/health/health.controller';
 import { validateEnv } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { MailModule } from './mail/mail.module';
+import { SignupModule } from './signup/signup.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { MailModule } from './mail/mail.module';
     AuditModule,
     MailModule,
     AuthModule,
+    SignupModule,
     BillingModule,
   ],
   controllers: [HealthController],
