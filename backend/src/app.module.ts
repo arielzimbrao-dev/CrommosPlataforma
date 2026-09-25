@@ -10,6 +10,7 @@ import { AllExceptionsFilter } from './common/exceptions/all-exceptions.filter';
 import { HealthController } from './common/health/health.controller';
 import { validateEnv } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
+import { InternoModule } from './interno/interno.module';
 import { MailModule } from './mail/mail.module';
 import { SignupModule } from './signup/signup.module';
 
@@ -29,6 +30,7 @@ import { SignupModule } from './signup/signup.module';
     MailModule,
     AuthModule,
     SignupModule,
+    InternoModule,
     BillingModule,
   ],
   controllers: [HealthController],
