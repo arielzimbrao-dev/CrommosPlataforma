@@ -72,6 +72,12 @@ export class EnvironmentVariables {
   @IsIn(BOOL_VALUES)
   DB_RUN_SQL_MIGRATIONS?: string;
 
+  /** B4: schemas de produto a esperar antes das migrations (CSV; `nenhum`). */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  DB_AGUARDAR_SCHEMAS?: string;
+
   @IsOptional()
   @IsString()
   @IsNotEmpty()
@@ -155,26 +161,50 @@ export class EnvironmentVariables {
   @IsNotEmpty()
   JWT_REFRESH_EXPIRES_IN?: string;
 
-  // E-mail transacional (SendPulse). Sem credenciais, stub (loga, não envia).
+  // E-mail transacional (Resend). Sem a chave, stub (loga, não envia).
   @IsOptional()
   @IsString()
   @IsNotEmpty()
-  SENDPULSE_CLIENT_ID?: string;
+  RESEND_API_KEY?: string;
+
+  /** Remetente (`Nome <email@dominio>`, domínio verificado na Resend). */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  EMAIL_FROM?: string;
+
+  /** Dias depois do vencimento até o modo leitura por inadimplência (padrão 7). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(90)
+  DIAS_TOLERANCIA_INADIMPLENCIA?: number;
+
+  // AbacatePay (cobrança das faturas). Sem a chave, stub (sem link de pagamento).
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  ABACATEPAY_API_KEY?: string;
+
+  /** Segredo do webhook (`?webhookSecret=`). Obrigatório com a chave. */
+  @ValidateIf((o: EnvironmentVariables) => !!o.ABACATEPAY_API_KEY)
+  @IsString()
+  @MinLength(16, {
+    message:
+      'ABACATEPAY_WEBHOOK_SECRET (>= 16 caracteres) é obrigatória com ABACATEPAY_API_KEY.',
+  })
+  ABACATEPAY_WEBHOOK_SECRET?: string;
 
   @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  SENDPULSE_CLIENT_SECRET?: string;
+  @IsUrl(URL_OPCOES)
+  ABACATEPAY_API_URL?: string;
 
+  /** Chave da assinatura HMAC do webhook (padrão: a pública da documentação). */
   @IsOptional()
   @IsString()
   @IsNotEmpty()
-  SENDPULSE_FROM_EMAIL?: string;
-
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  SENDPULSE_FROM_NAME?: string;
+  ABACATEPAY_HMAC_KEY?: string;
 
   /** Baixa manual de fatura (`X-Plataforma-Key`). Sem ela, a rota é 404. */
   @IsOptional()
@@ -210,6 +240,23 @@ export class EnvironmentVariables {
   @IsString()
   @MinLength(32)
   SERVICO_KEY_VET?: string;
+
+  // Chave que a plataforma ENVIA ao produto (provisionamento). Sem ela, vale a
+  // SERVICO_KEY_<PRODUTO> (compatível); com ela, cada sentido tem a sua.
+  @IsOptional()
+  @IsString()
+  @MinLength(32)
+  PROVISIONAMENTO_KEY_CLINIC?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(32)
+  PROVISIONAMENTO_KEY_ODONTO?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(32)
+  PROVISIONAMENTO_KEY_VET?: string;
 }
 
 const falha = (detalhe: string): Error =>

@@ -21,12 +21,20 @@ describe('produtos', () => {
       produto: 'clinic',
       apiUrl: 'http://clinic-api:3000',
       chaveServico: K_CLINIC,
+      chaveProvisionamento: K_CLINIC,
     });
     expect(configProduto('odonto', env)).toBeNull();
     expect(produtosDisponiveis(env).map((p) => p.produto)).toEqual([
       'clinic',
       'vet',
     ]);
+  });
+
+  it('chave de provisionamento própria (plataforma → produto) quando configurada', () => {
+    const K_PROV = 'p'.repeat(40);
+    expect(
+      configProduto('clinic', { ...env, PROVISIONAMENTO_KEY_CLINIC: K_PROV }),
+    ).toMatchObject({ chaveServico: K_CLINIC, chaveProvisionamento: K_PROV });
   });
 
   it('produtoDaChave identifica o produto pela chave; errada → null', () => {

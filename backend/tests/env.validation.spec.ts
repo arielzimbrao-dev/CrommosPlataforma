@@ -29,11 +29,37 @@ describe('validateEnv', () => {
 
   it('opcionais vazios (`VAR=`) contam como ausentes; obrigatória vazia falha', () => {
     expect(() =>
-      validateEnv({ ...valido(), FRONTEND_URL: '', SENDPULSE_CLIENT_ID: '' }),
+      validateEnv({ ...valido(), FRONTEND_URL: '', RESEND_API_KEY: '' }),
     ).not.toThrow();
     expect(() => validateEnv({ ...valido(), DB_HOST: '' })).toThrow(
       /Configuração de ambiente inválida/,
     );
+  });
+
+  it('novas variáveis: tolerância da inadimplência, AbacatePay (chave pede segredo do webhook), chaves de provisionamento', () => {
+    expect(
+      validateEnv({ ...valido(), DIAS_TOLERANCIA_INADIMPLENCIA: '7' })
+        .DIAS_TOLERANCIA_INADIMPLENCIA,
+    ).toBe(7);
+    expect(() =>
+      validateEnv({ ...valido(), DIAS_TOLERANCIA_INADIMPLENCIA: '-1' }),
+    ).toThrow();
+    expect(() =>
+      validateEnv({ ...valido(), ABACATEPAY_API_KEY: 'abc_dev_123' }),
+    ).toThrow(/ABACATEPAY_WEBHOOK_SECRET/);
+    expect(() =>
+      validateEnv({
+        ...valido(),
+        ABACATEPAY_API_KEY: 'abc_dev_123',
+        ABACATEPAY_WEBHOOK_SECRET: 'segredo-do-webhook-123',
+        RESEND_API_KEY: 're_123',
+        EMAIL_FROM: 'Crommos <contato@crommos.com>',
+        DB_AGUARDAR_SCHEMAS: 'clinic',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateEnv({ ...valido(), PROVISIONAMENTO_KEY_CLINIC: 'curta' }),
+    ).toThrow();
   });
 
   it('exige as chaves JWT e que a pública seja a da privada (PEM, também com \\n escapado)', () => {

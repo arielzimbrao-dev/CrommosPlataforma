@@ -9,18 +9,29 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { basicAuth } from './common/http/basic-auth.middleware';
 import { corsPermite, origensPermitidas } from './common/http/cors';
+import { capturarErrosNaoTratados, LoggerJson } from './common/log/logger-json';
+import { requestIdMiddleware } from './common/log/request-id';
 import { loadEnv } from './config/load-env';
 
 loadEnv();
 process.env.TZ = process.env.TZ ?? 'America/Sao_Paulo';
 
 async function bootstrap(): Promise<void> {
+  // Produção: logs JSON (uma linha por evento, com request-id). Dev: o padrão.
+  const logger =
+    process.env.NODE_ENV === 'production'
+      ? new LoggerJson()
+      : process.env.NODE_ENV === 'development'
+        ? (['log', 'error', 'warn', 'debug', 'verbose'] as const)
+        : (['error', 'warn'] as const);
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    logger:
-      process.env.NODE_ENV === 'development'
-        ? ['log', 'error', 'warn', 'debug', 'verbose']
-        : ['error', 'warn'],
+    logger: logger instanceof LoggerJson ? logger : [...logger],
+    // Corpo cru disponível (req.rawBody): HMAC do webhook da AbacatePay.
+    rawBody: true,
   });
+  capturarErrosNaoTratados(new Logger('Processo'));
+  // Request-id antes de tudo (logs e chamadas aos produtos).
+  app.use(requestIdMiddleware);
 
   // Atrás do proxy (Coolify/Traefik): confia em 1 hop para que `req.ip`
   // reflita o IP real do cliente — sem isto, o rate limiting por IP trataria
