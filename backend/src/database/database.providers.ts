@@ -9,7 +9,11 @@ import { Assinatura } from '../billing/assinatura.entity';
 import { Cliente } from '../billing/cliente.entity';
 import { Fatura } from '../billing/fatura.entity';
 import { loadEnv } from '../config/load-env';
-import { aplicarMigrations } from './migrations-runner';
+import {
+  aguardarSchemas,
+  aplicarMigrations,
+  schemasAguardados,
+} from './migrations-runner';
 import { OPCAO_SEARCH_PATH } from './schemas';
 
 loadEnv();
@@ -56,6 +60,7 @@ async function executarMigrations(ds: DataSource): Promise<void> {
   const qr = ds.createQueryRunner();
   await qr.connect();
   try {
+    await aguardarSchemas(qr, schemasAguardados());
     const aplicadas = await aplicarMigrations(
       qr,
       lerMigrations(diretorioMigrations()),
