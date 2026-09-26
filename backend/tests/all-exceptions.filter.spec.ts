@@ -100,7 +100,8 @@ describe('AllExceptionsFilter', () => {
       expect(status).toHaveBeenCalledWith(HttpStatus.CONFLICT);
       expect(send.mock.calls[0][0]).toMatchObject({
         statusCode: 409,
-        message: 'Já existe uma conta com este e-mail. Entre com a sua conta.',
+        message:
+          'Já existe uma conta com este e-mail. Entre com a sua conta (lá você pode criar outra clínica).',
       });
     });
 

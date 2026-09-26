@@ -16,7 +16,7 @@ import { Request, Response } from 'express';
 const MENSAGENS_CONSTRAINT: Record<string, string> = {
   // Login único: o e-mail é da pessoa, em toda a plataforma.
   uq_usuarios_email:
-    'Já existe uma conta com este e-mail. Entre com a sua conta.',
+    'Já existe uma conta com este e-mail. Entre com a sua conta (lá você pode criar outra clínica).',
   uq_clientes_documento: 'Já existe um cliente com este CPF/CNPJ.',
   uq_acessos_usuario_produto_tenant:
     'Esta pessoa já tem acesso a esta clínica.',

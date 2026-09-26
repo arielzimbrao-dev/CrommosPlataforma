@@ -134,7 +134,7 @@ describeDb('Signup (integração)', () => {
     await signup(base).expect(201);
     const email = await signup(corpo({ email: base.email })).expect(409);
     expect(email.body.message).toBe(
-      'Já existe uma conta com este e-mail. Entre com a sua conta.',
+      'Já existe uma conta com este e-mail. Entre com a sua conta (lá você pode criar outra clínica).',
     );
     const doc = await signup(corpo({ documento: base.documento })).expect(409);
     expect(doc.body.message).toBe('Já existe um cliente com este CPF/CNPJ.');
@@ -183,6 +183,96 @@ describeDb('Signup (integração)', () => {
   it('falha no e-mail de confirmação não desfaz a conta', async () => {
     mail.sendConfirmacaoEmail.mockRejectedValueOnce(new Error('smtp'));
     await signup(corpo()).expect(201);
+  });
+
+  describe('R2: outra clínica na mesma conta (POST /signup/clinica)', () => {
+    const confirmar = (email: string) =>
+      ds.query(
+        `UPDATE crommos.usuarios SET email_confirmacao_hash = NULL WHERE email = $1`,
+        [email],
+      );
+    const novaClinica = (token: string, over: Record<string, unknown> = {}) =>
+      request(app.getHttpServer())
+        .post('/signup/clinica')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          produto: 'clinic',
+          tipoCliente: 'pf',
+          nomeClinica: 'Segunda Clínica',
+          nomeUnidade: 'Filial',
+          ...over,
+        });
+
+    it('mesmo CPF: reaproveita o cliente, cria tenant novo em trial e entra nele; a pessoa escolhe a clínica no login', async () => {
+      const base = corpo();
+      const r1 = await signup(base).expect(201);
+      await confirmar(base.email);
+      produto.chamadas.length = 0;
+      const r2 = await novaClinica(r1.body.accessToken as string, {
+        documento: base.documento,
+      }).expect(201);
+      expect(r2.body.acesso.tenantId).not.toBe(r1.body.acesso.tenantId);
+      expect(r2.body.pessoa.id).toBe(r1.body.pessoa.id);
+      expect(produto.chamadas[0].body).toMatchObject({
+        nomeClinica: 'Segunda Clínica',
+        nomeUnidade: 'Filial',
+        admin: { usuarioId: r1.body.pessoa.id, email: base.email },
+      });
+      const clientes = await ds.query(
+        `SELECT DISTINCT cliente_id FROM crommos.assinaturas WHERE tenant_id = ANY($1)`,
+        [[r1.body.acesso.tenantId, r2.body.acesso.tenantId]],
+      );
+      expect(clientes).toHaveLength(1);
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: base.email, password: base.senha, produto: 'clinic' })
+        .expect(200);
+      expect(login.body.escolherClinica).toHaveLength(2);
+    });
+
+    it('CPF novo cria outro cliente; CPF de outra conta → 409; e-mail não confirmado → 403; sem token → 401', async () => {
+      const a = corpo();
+      const b = corpo();
+      const ra = await signup(a).expect(201);
+      await signup(b).expect(201);
+      const token = ra.body.accessToken as string;
+      await novaClinica(token, { documento: cpfValido() }).expect(403);
+      await confirmar(a.email);
+      await novaClinica(token, { documento: cpfValido() }).expect(201);
+      const outra = await novaClinica(token, { documento: b.documento }).expect(
+        409,
+      );
+      expect(outra.body.message).toBe(
+        'Este CPF/CNPJ já está cadastrado em outra conta.',
+      );
+      await request(app.getHttpServer())
+        .post('/signup/clinica')
+        .send({})
+        .expect(401);
+    });
+
+    it('produto falha → 502 e desfaz só o que criou (a pessoa e o cliente antigos ficam)', async () => {
+      const base = corpo();
+      const r1 = await signup(base).expect(201);
+      await confirmar(base.email);
+      produto.status = 500;
+      await novaClinica(r1.body.accessToken as string, {
+        documento: base.documento,
+      }).expect(502);
+      expect(
+        await contar(
+          `SELECT count(*)::int AS n FROM crommos.acessos a
+             JOIN crommos.usuarios u ON u.id = a.usuario_id WHERE u.email = $1`,
+          [base.email],
+        ),
+      ).toBe(1);
+      expect(
+        await contar(
+          `SELECT count(*)::int AS n FROM crommos.clientes WHERE documento = $1`,
+          [base.documento],
+        ),
+      ).toBe(1);
+    });
   });
 
   it('400: produto indisponível, documento inválido, sem aceite, campo a mais', async () => {
