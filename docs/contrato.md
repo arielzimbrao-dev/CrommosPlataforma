@@ -28,6 +28,25 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
   reuso, ver abaixo).
 - `assinaturas` ganha `tenant_nome varchar`, `tenant_codigo varchar(5)` (exibição na escolha de
   clínica; o código é gerado pela plataforma no signup).
+- `assinaturas` ganha `trial_confirmado_em timestamptz` e `inadimplente_desde date` (migration
+  05). **Modo leitura** do tenant (o produto calcula com a linha da assinatura, sem chamar a
+  plataforma): `(em_trial_ate <= hoje AND trial_confirmado_em IS NULL) OR inadimplente_desde IS NOT
+  NULL`. `inadimplente_desde` é mantida só pela plataforma (job diário + cada baixa).
+- Um cliente (CPF/CNPJ) pode ter **várias** assinaturas do mesmo produto (o índice
+  `uq_assinaturas_cliente_produto` saiu na 05).
+- **Sem assinatura** (ausente ou com `deleted_at`) = nenhum módulo (fail-closed, nos dois lados).
+
+### Modo leitura (decisão de produto)
+
+- **Fim do trial:** nada é faturado sozinho. Antes do fim, o admin confirma módulos e usuários
+  (`PATCH /assinatura` = confirmação). Sem confirmação, no dia `em_trial_ate` o tenant entra em
+  modo leitura; confirmar depois abre o 1º ciclo pago no mesmo dia (fatura `ciclo`).
+- **Inadimplência:** fatura `pendente` com `vencimento` há mais de `DIAS_TOLERANCIA_INADIMPLENCIA`
+  dias (padrão 7) → modo leitura. Aviso desde o vencimento (`faturaVencida`). A baixa (webhook ou
+  manual) reativa na hora.
+- **No produto:** em modo leitura, `GET`/`HEAD`/`OPTIONS` passam; escrita responde **`402`** com
+  `{ code: 'ASSINATURA_MODO_LEITURA', motivo: 'trial_expirado' | 'inadimplencia', message }`.
+  Login, sessão e as telas de assinatura (plataforma) continuam funcionando.
 
 ## API pública da plataforma (`PLATAFORMA_URL`)
 
@@ -42,9 +61,15 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
 | `GET /auth/confirmar-email?token=` | — | redireciona para `FRONTEND_URL/login?emailConfirmado=1\|0` |
 | `POST /auth/reenviar-confirmacao` | — (autenticado) | `204`; `409` se já confirmado |
 | `POST /signup` | `{ produto, tipoCliente, documento, nomeClinica, cnpj?, nome, email, senha, nomeUnidade, aceiteTermos }` | `201` sucesso do login + `codigo`. `409` e-mail ou documento já cadastrado; `502` se o provisionamento falhar |
-| `GET /modulos` | autenticado | `{ catalogo, ativos }` |
-| `GET /assinatura` · `POST /assinatura/simular` · `PATCH /assinatura` · `GET /assinatura/faturas` | autenticado; `admin` altera, `admin`/`financeiro` leem | mesmos formatos de hoje no Clinic |
-| `POST /plataforma/faturas/:id/pagar` | `X-Plataforma-Key` | baixa manual (backoffice) |
+| `POST /signup/clinica` | autenticado; `{ produto, tipoCliente, documento, nomeClinica, cnpj?, nomeUnidade }` | **Outra clínica na mesma conta** (R2): `201` sucesso do login **na clínica nova** + `codigo`. Documento de cliente existente só para quem é admin de uma clínica dele (`409` senão); `403` e-mail não confirmado; `502` provisionamento |
+| `GET /modulos` | autenticado | `{ catalogo, ativos, situacao: { modoLeitura, emTrialAte, trialConfirmado, faturaVencida: { vencimento, bloqueiaEm } \| null } }` |
+| `GET /assinatura` · `POST /assinatura/simular` · `PATCH /assinatura` · `GET /assinatura/faturas` | autenticado; `admin` altera, `admin`/`financeiro` leem | formatos do Clinic; `GET /assinatura` traz também `trialConfirmado`, `modoLeitura`, `faturaVencida: { id, vencimento, valorLiquido, bloqueiaEm } \| null` e `pagamentoOnline`. `PATCH` confirma o fim do trial |
+| `POST /assinatura/faturas/:id/pagamento` | `admin`/`financeiro` | `200 { url }` do checkout da AbacatePay (PIX/cartão), criado uma vez por fatura; `409` não pendente; `503` sem AbacatePay |
+| `POST /webhooks/abacatepay?webhookSecret=` | AbacatePay (`X-Webhook-Signature`) | `200 { recebido: true }`; baixa idempotente de `checkout.completed`/`billing.paid` depois de conferir o checkout `PAID` na API; `401` segredo/HMAC; `404` sem AbacatePay |
+| `GET /conta/dados` | autenticado | LGPD: `{ pessoa, acessos, sessoes, auditoria }` da própria pessoa |
+| `POST /conta/excluir` | autenticado; `{ senha }` | `204`: anonimiza a pessoa, desativa os acessos e revoga as sessões. `400` senha errada; `409` se for o último admin ativo de uma clínica com assinatura |
+| `POST /plataforma/faturas/:id/pagar` | `X-Plataforma-Key` | baixa manual (contingência do webhook) |
+| `GET /health` · `GET /health/ready` | público | liveness · readiness (`SELECT 1`; `503` sem banco) |
 
 CORS: origens dos frontends dos produtos (`FRONTEND_URLS`, CSV), com credenciais.
 
@@ -55,14 +80,20 @@ constante; `404` sem chave configurada. O `produto` vem da chave, não do corpo.
 
 | Método e rota | Corpo | Resposta |
 |---|---|---|
-| `POST /interno/acessos` | `{ tenantId, email, nome, papel }` | `201 { usuarioId, novo }` — pessoa nova recebe e-mail de convite (token 7 dias); `409` já tem acesso neste tenant; `409` limite de usuários da assinatura (trava a linha da assinatura) |
+| `POST /interno/acessos` | `{ tenantId, email, nome, papel }` | `201 { usuarioId, novo, convitePendente, emailEnviado }` — quem não tem senha recebe e-mail de convite (token 7 dias). **E-mail que falhou não é erro** (B2): o acesso está gravado, `emailEnviado: false` → o produto grava o vínculo e oferece "reenviar convite". `409` já tem acesso neste tenant; `409` limite de usuários da assinatura (trava a linha da assinatura) |
+| `DELETE /interno/acessos` | `{ tenantId, usuarioId }` | `204` — compensação: o produto não conseguiu gravar o vínculo depois do `POST`; remove o acesso (libera a vaga) e revoga as sessões no tenant. `404` sem acesso |
 | `PATCH /interno/acessos` | `{ tenantId, usuarioId, papel?, ativo? }` | `200 { usuarioId, produto, tenantId, papel, ativo, convitePendente }` — desativar revoga as sessões da pessoa no tenant; reativar respeita o limite (`409`); `404` sem acesso |
 | `POST /interno/acessos/reenviar-convite` | `{ tenantId, usuarioId }` | `204`; `409` se a pessoa já definiu a senha |
 | `GET /interno/pessoas/:usuarioId` | — | `{ id, nome, email, emailConfirmado }`; `404` se a pessoa não tem acesso a nenhum tenant do produto |
 
 ## API interna do produto (chamada pela plataforma)
 
-Base `CLINIC_API_URL` etc.; mesmo cabeçalho `X-Servico-Key` (a chave do produto).
+Base `CLINIC_API_URL` etc.; cabeçalho `X-Servico-Key` = `PROVISIONAMENTO_KEY_<PRODUTO>` (chave
+própria deste sentido) ou, se ela não existir, a `SERVICO_KEY_<PRODUTO>` (compatível).
+
+**Request-id:** as duas APIs aceitam `X-Request-Id` (8–128 caracteres `[A-Za-z0-9._:-]`, senão
+geram um UUID), devolvem no header da resposta, gravam em cada linha de log (JSON em produção) e
+repassam nas chamadas entre si.
 
 | Método e rota | Corpo | Resposta |
 |---|---|---|
@@ -88,13 +119,15 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
   indisponível → `400`.
 - **API interna:** sem nenhuma chave configurada → `404`; chave ausente/errada → `401`. `papel` é
   texto do produto (`^[a-z_]{2,30}$`); a plataforma só distingue `admin` e `financeiro`.
-- **`novo`** = a pessoa foi criada agora. O e-mail de convite vai para quem ainda não tem senha
-  (pessoa nova ou só com convites pendentes; o link anterior deixa de valer). Falha no envio → `503`
-  com o acesso já gravado (o produto usa "reenviar convite").
+- **`novo`** = a pessoa foi criada agora; **`convitePendente`** = ela ainda não tem senha (nova ou
+  só com convites pendentes; o link anterior deixa de valer). Falha no envio → `201` com
+  `emailEnviado: false` e o acesso gravado (o produto usa "reenviar convite").
 - **Limite de usuários:** acessos `ativo` do tenant (convite pendente é ativo) contra
   `assinaturas.numero_usuarios`; tenant sem assinatura (legado) não tem limite.
-- **Refresh:** rotação a cada chamada. Reapresentar um refresh **já rotacionado** (`substituida_por`
-  preenchido) é reuso: revoga todas as sessões da pessoa. Sessão revogada por logout, senha ou
+- **Refresh:** rotação a cada chamada. Reapresentar um refresh rotacionado há **menos de 10 s**
+  (várias abas renovando juntas, B1) emite um par novo, sem revogar nada. Depois disso,
+  reapresentar um refresh **já rotacionado** (`substituida_por` preenchido) é reuso: revoga todas
+  as sessões da pessoa. Sessão revogada por logout, senha ou
   desativação só dá `401`. Refresh com o acesso desativado → `401`.
 - **Esqueci a senha** só envia para quem tem algum acesso ativo (a resposta é sempre `202`).
   `trocar-senha` com a senha atual errada → `400`.
@@ -106,5 +139,18 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
   `tenantId`, que não se repete).
 - **Migrations:** a plataforma não cria a RLS que o Clinic liga em `assinaturas`/`faturas` (é do
   produto). O backfill (`04`) roda uma vez e lê `clinic.users`/`clinic.clinicas` se existirem.
+- **Banco vazio (B4):** antes das migrations, a plataforma **espera** o schema de cada produto
+  configurado existir (em produção; `DB_AGUARDAR_SCHEMAS` CSV sobrescreve, `nenhum` desliga; 60 × 5 s
+  e derruba o boot). Assim a ordem de subida no Coolify não importa.
+- **Cobrança (AbacatePay, API v2):** checkout hospedado (PIX + cartão) criado sob demanda por
+  fatura: cliente da AbacatePay (único por CPF/CNPJ, guardado em `clientes.abacatepay_id`), produto
+  avulso com o valor e checkout com `externalId` = id da fatura. O webhook valida
+  `?webhookSecret=` e o HMAC-SHA256 (base64) do corpo cru e **confere o checkout na API** antes da
+  baixa. Redução que mexe numa fatura pendente descarta o checkout dela (o próximo sai com o valor
+  novo). Sem `ABACATEPAY_API_KEY`: sem link (503) e webhook 404.
+- **E-mail:** Resend (API HTTP); sem `RESEND_API_KEY`, stub.
+- **Várias réplicas:** rate limit no Postgres (`crommos.rate_limit`), jobs com advisory lock,
+  migrations com advisory lock, nada de estado em memória entre requisições.
+- **Estoque:** módulo no catálogo com preço _a definir_ (como Convênio).
 - **Auditoria:** `crommos.auditoria (usuario_id, produto, tenant_id, action, resource, resource_id,
   created_at)` — login, logout, signup, senha, e-mail, acessos (ator = produto), assinatura, baixa.

@@ -1,4 +1,13 @@
-import { Controller, Get, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Inject,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import type { DataSource } from 'typeorm';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { IsPublic } from '../../auth/decorators/is-public.decorator';
 
@@ -21,6 +30,26 @@ export interface HealthStatus {
 // (@IsPublic cobre o JwtAuthGuard e o TenantGuard).
 @IsPublic()
 export class HealthController {
+  constructor(
+    @Optional() @Inject('DATA_SOURCE') private readonly ds?: DataSource,
+  ) {}
+
+  /**
+   * Readiness: a API consegue falar com o banco (`SELECT 1`). 503 enquanto
+   * não consegue — o proxy do Coolify tira a réplica da rotação.
+   */
+  @Get('ready')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Readiness (confere o banco)' })
+  async ready(): Promise<{ status: 'ok'; banco: 'ok' }> {
+    try {
+      await this.ds!.query('SELECT 1');
+    } catch {
+      throw new ServiceUnavailableException('Banco indisponível.');
+    }
+    return { status: 'ok', banco: 'ok' };
+  }
+
   @Get()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

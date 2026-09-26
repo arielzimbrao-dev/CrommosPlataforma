@@ -5,6 +5,7 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { Acesso } from 'src/auth/acesso.entity';
 import { hojeISO } from 'src/common/data-brasil';
+import { AssinaturaService } from 'src/billing/assinatura.service';
 import { MODULE_CODES } from 'src/billing/modules.catalog';
 import { criarApp, fecharApp, limparBanco, mailFalso } from './support/app';
 import {
@@ -233,5 +234,76 @@ describeDb('Billing (integração)', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('inadimplência: vencida além da tolerância → modo leitura em /modulos; a baixa reativa na hora; fail-closed sem assinatura', async () => {
+    const svc = app.get(AssinaturaService);
+    const T_DEVEDOR = randomUUID();
+    const a = await criarAssinatura(ds, { tenantId: T_DEVEDOR });
+    const p = await criarPessoa(ds, { email: 'devedor@bill.com' });
+    await criarAcesso(ds, { usuarioId: p.id, tenantId: T_DEVEDOR });
+    const l = await http()
+      .post('/auth/login')
+      .send({ email: 'devedor@bill.com', password: SENHA, produto: 'clinic' })
+      .expect(200);
+    const auth = { Authorization: `Bearer ${l.body.accessToken as string}` };
+    const [f] = await ds.query(
+      `INSERT INTO crommos.faturas (tenant_id, assinatura_id, tipo, periodo_inicio,
+         periodo_fim, valor_bruto, valor_liquido, vencimento)
+       VALUES ($1, $2, 'ciclo', '2026-01-01', '2026-02-01', 10, 10, '2026-01-01')
+       RETURNING id`,
+      [T_DEVEDOR, a.id],
+    );
+    // Vencida há 7 dias: só aviso. Há 8: leitura.
+    await svc.atualizarInadimplencia('2026-01-08');
+    let m = await http().get('/modulos').set(auth).expect(200);
+    expect(m.body.situacao.modoLeitura).toBeNull();
+    await svc.atualizarInadimplencia('2026-01-09');
+    m = await http().get('/modulos').set(auth).expect(200);
+    expect(m.body.situacao).toMatchObject({
+      modoLeitura: 'inadimplencia',
+      faturaVencida: { vencimento: '2026-01-01', bloqueiaEm: '2026-01-09' },
+    });
+    await http()
+      .post(`/plataforma/faturas/${f.id as string}/pagar`)
+      .set('X-Plataforma-Key', CHAVE)
+      .expect(200);
+    m = await http().get('/modulos').set(auth).expect(200);
+    expect(m.body.situacao.modoLeitura).toBeNull();
+
+    // Assinatura removida (soft-delete): nenhum módulo.
+    await ds.query(
+      `UPDATE crommos.assinaturas SET deleted_at = now() WHERE id = $1`,
+      [a.id],
+    );
+    m = await http().get('/modulos').set(auth).expect(200);
+    expect(m.body.ativos).toEqual([]);
+  });
+
+  it('pagamento online: sem AbacatePay configurada → 503; fatura de outro tenant → 404', async () => {
+    const r = await http().get('/assinatura').set(como('admin')).expect(200);
+    expect(r.body.pagamentoOnline).toBe(false);
+    const faturas = await http()
+      .get('/assinatura/faturas')
+      .set(como('admin'))
+      .expect(200);
+    const pendente = (
+      faturas.body.data as { id: string; status: string }[]
+    ).find((x) => x.status === 'pendente');
+    if (pendente) {
+      await http()
+        .post(`/assinatura/faturas/${pendente.id}/pagamento`)
+        .set(como('admin'))
+        .expect(503);
+    }
+    await http()
+      .post(`/assinatura/faturas/${randomUUID()}/pagamento`)
+      .set(como('financeiro'))
+      .expect(404);
+    await http()
+      .post(`/assinatura/faturas/${randomUUID()}/pagamento`)
+      .set(como('gestor'))
+      .expect(403);
+    await http().post('/webhooks/abacatepay').send({}).expect(404);
   });
 });

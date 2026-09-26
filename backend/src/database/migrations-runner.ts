@@ -14,6 +14,8 @@
  * Restrição: nada que não rode em transação (ex.: `CREATE INDEX CONCURRENTLY`).
  */
 
+import { produtosDisponiveis } from '../common/produtos';
+
 /** Conexão mínima usada pelo runner (QueryRunner do TypeORM). */
 export interface ExecutorSql {
   query(sql: string, params?: unknown[]): Promise<unknown>;
@@ -171,4 +173,67 @@ export async function aplicarMigrations(
   } finally {
     await db.query('SELECT pg_advisory_unlock($1)', [lock]);
   }
+}
+
+const SCHEMA_VALIDO = /^[a-z_][a-z0-9_]*$/;
+
+/**
+ * B4 — schemas de produto que precisam existir antes das migrations da
+ * plataforma. Num banco **vazio**, as migrations antigas do Clinic (01–67)
+ * criam tabelas sem schema e contam com o `crommos` ainda não existir; se a
+ * plataforma subir primeiro, parte delas iria para o schema errado. A
+ * plataforma espera o produto criar o schema dele (Clinic, migration 68).
+ *
+ * `DB_AGUARDAR_SCHEMAS` (CSV; `nenhum` desliga) manda; sem ela, em produção,
+ * valem os produtos configurados (URL + chave).
+ */
+export function schemasAguardados(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const valor = env.DB_AGUARDAR_SCHEMAS?.trim();
+  if (valor) {
+    if (valor === 'nenhum') return [];
+    const lista = valor.split(',').map((s) => s.trim());
+    if (lista.some((s) => !SCHEMA_VALIDO.test(s))) {
+      throw new Error(`[database] DB_AGUARDAR_SCHEMAS inválida: ${valor}`);
+    }
+    return lista;
+  }
+  if (env.NODE_ENV !== 'production') return [];
+  return produtosDisponiveis(env).map((p) => p.produto);
+}
+
+/** Espera os schemas existirem (padrão: 60 × 5 s); esgotado, derruba o boot. */
+export async function aguardarSchemas(
+  db: ExecutorSql,
+  schemas: string[],
+  {
+    tentativas = 60,
+    esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+    intervaloMs = 5_000,
+    log = console.log,
+  }: {
+    tentativas?: number;
+    esperar?: (ms: number) => Promise<void>;
+    intervaloMs?: number;
+    log?: (msg: string) => void;
+  } = {},
+): Promise<void> {
+  if (!schemas.length) return;
+  for (let i = 1; i <= tentativas; i++) {
+    const achados = (await db.query(
+      'SELECT nspname FROM pg_namespace WHERE nspname = ANY($1)',
+      [schemas],
+    )) as { nspname: string }[];
+    const faltam = schemas.filter((s) => !achados.some((a) => a.nspname === s));
+    if (!faltam.length) return;
+    if (i === tentativas) break;
+    log(
+      `[migration] Aguardando o produto criar o schema: ${faltam.join(', ')} (${i}/${tentativas}).`,
+    );
+    await esperar(intervaloMs);
+  }
+  throw new Error(
+    `[migration] Schemas ${schemas.join(', ')} não apareceram: suba a API do produto (ela cria o schema) ou ajuste DB_AGUARDAR_SCHEMAS.`,
+  );
 }

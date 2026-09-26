@@ -1,8 +1,11 @@
 import {
   BadGatewayException,
+  ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
@@ -27,7 +30,7 @@ import { onlyDigits } from '../common/cpf';
 import { configProduto, ConfigProduto } from '../common/produtos';
 import { MailService } from '../mail/mail.service';
 import { gerarCodigoTenant } from './codigo';
-import { SignupDto } from './dtos/signup.dto';
+import { NovaClinicaDto, SignupDto } from './dtos/signup.dto';
 import { ProvisionamentoClient } from './provisionamento.client';
 
 /**
@@ -40,6 +43,9 @@ interface Criados {
   codigo: string;
   tenantId: string;
   clienteId: string;
+  /** O signup criou o cliente/pessoa (a compensação só apaga o que criou). */
+  clienteNovo: boolean;
+  usuarioNovo: boolean;
   usuario: Usuario;
   assinaturaId: string;
   acessoId: string;
@@ -110,30 +116,15 @@ export class SignupService {
         codigo,
         tenantId,
         clienteId: cliente.id,
+        clienteNovo: true,
+        usuarioNovo: true,
         usuario,
         assinaturaId: assinatura.id,
         acessoId: acesso.id,
       };
     });
 
-    try {
-      await this.provisionamento.criarTenant(cfg, {
-        tenantId,
-        codigo: c.codigo,
-        nomeClinica: dto.nomeClinica,
-        ...(dto.cnpj ? { cnpj: dto.cnpj } : {}),
-        nomeUnidade: dto.nomeUnidade,
-        admin: { usuarioId: c.usuario.id, nome: dto.nome, email },
-      });
-    } catch (e) {
-      this.logger.warn(
-        `[signup] provisionamento falhou; desfazendo: ${e instanceof Error ? e.message : String(e)}`,
-      );
-      await this.desfazer(c);
-      throw new BadGatewayException(
-        'Não foi possível criar a clínica agora. Tente novamente em instantes.',
-      );
-    }
+    await this.provisionarOuDesfazer(cfg, c, dto);
 
     await this.audit.registrar({
       usuarioId: c.usuario.id,
@@ -157,13 +148,144 @@ export class SignupService {
     return { ...sessao, codigo: c.codigo };
   }
 
+  /**
+   * R2 — pessoa já logada cria **outra clínica** (tenant novo, trial próprio)
+   * na mesma conta. O cliente pagador é o do CPF/CNPJ informado: se já
+   * existe, só vale para quem é admin de uma clínica dele (senão 409); um
+   * cliente pode ter várias clínicas do mesmo produto. Exige e-mail
+   * confirmado. Devolve a sessão já na clínica nova.
+   */
+  async criarClinica(
+    usuarioId: string,
+    dto: NovaClinicaDto,
+  ): Promise<SessaoEmitida & { codigo: string }> {
+    exigirProdutoDisponivel(dto.produto);
+    const cfg = configProduto(dto.produto) as ConfigProduto;
+    const usuario = await this.ds
+      .getRepository(Usuario)
+      .findOne({ where: { id: usuarioId } });
+    if (!usuario) throw new UnauthorizedException();
+    if (usuario.emailConfirmacaoHash) {
+      throw new ForbiddenException(
+        'Confirme o seu e-mail (link enviado no cadastro) para criar outra clínica.',
+      );
+    }
+    const documento = onlyDigits(dto.documento);
+    const tenantId = randomUUID();
+
+    const c = await this.ds.transaction(async (em): Promise<Criados> => {
+      const codigo = await gerarCodigoTenant(em);
+      let cliente = await em.findOne(Cliente, { where: { documento } });
+      const clienteNovo = !cliente;
+      if (cliente) {
+        const [dono] = await em.query<unknown[]>(
+          `SELECT 1 FROM crommos.assinaturas a
+             JOIN crommos.acessos x
+               ON x.tenant_id = a.tenant_id AND x.produto = a.produto
+            WHERE a.cliente_id = $1 AND a.deleted_at IS NULL
+              AND x.usuario_id = $2 AND x.papel = $3 AND x.ativo
+            LIMIT 1`,
+          [cliente.id, usuarioId, PAPEL_ADMIN],
+        );
+        if (!dono) {
+          throw new ConflictException(
+            'Este CPF/CNPJ já está cadastrado em outra conta.',
+          );
+        }
+      } else {
+        cliente = await em.save(Cliente, {
+          tipo: dto.tipoCliente,
+          documento,
+          nome: dto.nomeClinica,
+          emailCobranca: usuario.email,
+        });
+      }
+      const assinatura = await AssinaturaService.iniciarTrial(em, {
+        tenantId,
+        produto: dto.produto,
+        clienteId: cliente.id,
+        tenantNome: dto.nomeClinica,
+        tenantCodigo: codigo,
+      });
+      const acesso = await em.save(Acesso, {
+        usuarioId,
+        produto: dto.produto,
+        tenantId,
+        papel: PAPEL_ADMIN,
+        ativo: true,
+        convitePendente: false,
+      });
+      return {
+        codigo,
+        tenantId,
+        clienteId: cliente.id,
+        clienteNovo,
+        usuarioNovo: false,
+        usuario,
+        assinaturaId: assinatura.id,
+        acessoId: acesso.id,
+      };
+    });
+
+    await this.provisionarOuDesfazer(cfg, c, {
+      nomeClinica: dto.nomeClinica,
+      cnpj: dto.cnpj,
+      nomeUnidade: dto.nomeUnidade,
+      nome: usuario.nome,
+    });
+    await this.audit.registrar({
+      usuarioId,
+      produto: dto.produto,
+      tenantId,
+      action: 'nova-clinica',
+      resource: 'assinatura',
+      resourceId: c.assinaturaId,
+    });
+    const sessao = await this.auth.iniciarSessao(
+      usuario,
+      { produto: dto.produto, tenantId, papel: PAPEL_ADMIN },
+      'login',
+    );
+    return { ...sessao, codigo: c.codigo };
+  }
+
+  /** Pede o tenant ao produto; se falhar, desfaz o que foi criado e 502. */
+  private async provisionarOuDesfazer(
+    cfg: ConfigProduto,
+    c: Criados,
+    d: Pick<SignupDto, 'nomeClinica' | 'cnpj' | 'nomeUnidade' | 'nome'>,
+  ): Promise<void> {
+    try {
+      await this.provisionamento.criarTenant(cfg, {
+        tenantId: c.tenantId,
+        codigo: c.codigo,
+        nomeClinica: d.nomeClinica,
+        ...(d.cnpj ? { cnpj: d.cnpj } : {}),
+        nomeUnidade: d.nomeUnidade,
+        admin: {
+          usuarioId: c.usuario.id,
+          nome: d.nome,
+          email: c.usuario.email,
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `[signup] provisionamento falhou; desfazendo: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      await this.desfazer(c);
+      throw new BadGatewayException(
+        'Não foi possível criar a clínica agora. Tente novamente em instantes.',
+      );
+    }
+  }
+
   /** Compensação: apaga o que o signup criou (filho → pai). */
   private desfazer(c: Criados): Promise<void> {
     return this.ds.transaction(async (em) => {
       await em.delete(Acesso, { id: c.acessoId });
       await em.delete(Assinatura, { id: c.assinaturaId });
-      await em.delete(Usuario, { id: c.usuario.id });
-      await em.delete(Cliente, { id: c.clienteId });
+      if (c.usuarioNovo) await em.delete(Usuario, { id: c.usuario.id });
+      if (c.clienteNovo) await em.delete(Cliente, { id: c.clienteId });
     });
   }
 }

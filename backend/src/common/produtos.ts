@@ -15,8 +15,13 @@ export interface ConfigProduto {
   produto: Produto;
   /** Base da API do produto (provisionamento do tenant no signup). */
   apiUrl: string;
-  /** Chave de serviço do produto (`X-Servico-Key`, nos dois sentidos). */
+  /** Chave que o produto apresenta à API interna da plataforma. */
   chaveServico: string;
+  /**
+   * Chave que a plataforma apresenta ao produto (provisionamento):
+   * `PROVISIONAMENTO_KEY_<PRODUTO>`, ou a `chaveServico` (compatível).
+   */
+  chaveProvisionamento: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -35,7 +40,13 @@ export function configProduto(
   const apiUrl = env[`${prefixo(produto)}_API_URL`]?.trim();
   const chaveServico = env[`SERVICO_KEY_${prefixo(produto)}`];
   if (!apiUrl || !chaveServico) return null;
-  return { produto, apiUrl: apiUrl.replace(/\/$/, ''), chaveServico };
+  return {
+    produto,
+    apiUrl: apiUrl.replace(/\/$/, ''),
+    chaveServico,
+    chaveProvisionamento:
+      env[`PROVISIONAMENTO_KEY_${prefixo(produto)}`] || chaveServico,
+  };
 }
 
 /** Produtos configurados neste ambiente. */

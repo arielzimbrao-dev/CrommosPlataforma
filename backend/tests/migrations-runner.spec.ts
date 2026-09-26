@@ -1,5 +1,7 @@
 import {
+  aguardarSchemas,
   aplicarMigrations,
+  schemasAguardados,
   CONTROLE_PLATAFORMA,
   ordenarMigrations,
   splitSqlStatements,
@@ -226,5 +228,56 @@ describe('controle das migrations', () => {
     expect(log).toContain(
       'INSERT INTO public._sql_migrations (filename) VALUES ($1) ["01-a.sql"]',
     );
+  });
+});
+
+describe('B4: aguardar os schemas dos produtos (banco vazio)', () => {
+  const chaves = {
+    CLINIC_API_URL: 'http://clinic',
+    SERVICO_KEY_CLINIC: 'x'.repeat(32),
+  };
+
+  it('schemasAguardados: DB_AGUARDAR_SCHEMAS manda; senão, em produção, os produtos configurados', () => {
+    expect(schemasAguardados({ DB_AGUARDAR_SCHEMAS: 'clinic, vet' })).toEqual([
+      'clinic',
+      'vet',
+    ]);
+    expect(
+      schemasAguardados({ ...chaves, DB_AGUARDAR_SCHEMAS: 'nenhum' }),
+    ).toEqual([]);
+    expect(schemasAguardados({ ...chaves, NODE_ENV: 'production' })).toEqual([
+      'clinic',
+    ]);
+    expect(schemasAguardados({ ...chaves, NODE_ENV: 'test' })).toEqual([]);
+  });
+
+  it('recusa nome de schema inválido', () => {
+    expect(() => schemasAguardados({ DB_AGUARDAR_SCHEMAS: 'x;drop' })).toThrow(
+      /DB_AGUARDAR_SCHEMAS/,
+    );
+  });
+
+  it('espera até o schema existir', async () => {
+    const respostas = [[], [], [{ nspname: 'clinic' }]];
+    const db = { query: jest.fn(() => Promise.resolve(respostas.shift())) };
+    const esperar = jest.fn(() => Promise.resolve());
+    const log = jest.fn();
+    await aguardarSchemas(db, ['clinic'], { esperar, log });
+    expect(db.query).toHaveBeenCalledTimes(3);
+    expect(esperar).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/clinic/));
+  });
+
+  it('sem schemas não consulta; esgotadas as tentativas, lança', async () => {
+    const db = { query: jest.fn(() => Promise.resolve([])) };
+    await aguardarSchemas(db, []);
+    expect(db.query).not.toHaveBeenCalled();
+    await expect(
+      aguardarSchemas(db, ['clinic'], {
+        tentativas: 2,
+        esperar: () => Promise.resolve(),
+        log: () => undefined,
+      }),
+    ).rejects.toThrow(/clinic/);
   });
 });

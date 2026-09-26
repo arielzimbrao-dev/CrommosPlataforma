@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -19,6 +20,7 @@ import {
   AtualizarAcessoDto,
   CriarAcessoDto,
   ReenviarConviteDto,
+  RemoverAcessoDto,
 } from './dtos/acessos.dtos';
 import { ProdutoServico, ServicoKeyGuard } from './servico-key.guard';
 
@@ -45,6 +47,16 @@ export class InternoController {
     @Body() dto: AtualizarAcessoDto,
   ) {
     return this.acessos.atualizar(produto, dto);
+  }
+
+  /** Compensação: o produto não gravou o vínculo depois do convite. */
+  @Delete('acessos')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remover(
+    @ProdutoServico() produto: Produto,
+    @Body() dto: RemoverAcessoDto,
+  ): Promise<void> {
+    return this.acessos.remover(produto, dto);
   }
 
   @Post('acessos/reenviar-convite')

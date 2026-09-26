@@ -30,6 +30,17 @@ export interface AlvoSessao {
 const REFRESH_PADRAO_MS = 7 * 24 * 60 * 60 * 1000;
 /** Sessões vencidas há mais de 1 dia saem na limpeza diária. */
 const RETENCAO_VENCIDAS_MS = 24 * 60 * 60 * 1000;
+/**
+ * B1: várias abas renovam ao mesmo tempo com o mesmo cookie. Reapresentar um
+ * refresh rotacionado há menos disto é concorrência, não roubo: ganha um par
+ * novo (sessão própria) em vez de derrubar todas as sessões da pessoa.
+ */
+export const TOLERANCIA_ROTACAO_MS = 10_000;
+
+const rotacionadaAgora = (s: Sessao | null, agora = Date.now()) =>
+  !!s?.revogadaEm &&
+  !!s.substituidaPor &&
+  agora - s.revogadaEm.getTime() < TOLERANCIA_ROTACAO_MS;
 
 // `expiresIn` vem da config como string ('15m', '7d'); os tipos do
 // jsonwebtoken querem o template `StringValue` — validado em runtime.
@@ -100,8 +111,9 @@ export class SessoesService {
   /**
    * Consome o refresh (rotação): confere a sessão e a revoga atomicamente,
    * apontando a substituta (`jtiNovo`, a usar no `emitir`) — o UPDATE só casa
-   * se ela ainda estiver vigente. Refresh **já rotacionado** reapresentado =
-   * reuso (token vazado ou replay): revoga todas as sessões da pessoa. Sessão
+   * se ela ainda estiver vigente. Refresh rotacionado há menos de
+   * `TOLERANCIA_ROTACAO_MS` (outra aba) ganha um par novo. Depois disso, **já
+   * rotacionado** reapresentado = reuso (token vazado ou replay): revoga todas as sessões da pessoa. Sessão
    * revogada por logout/senha/desativação só dá 401.
    */
   async consumir(
@@ -122,12 +134,23 @@ export class SessoesService {
     }
     if (sessao.revogadaEm && !sessao.substituidaPor) throw invalido;
     const jtiNovo = randomUUID();
+    if (rotacionadaAgora(sessao)) return { claims: p, jtiNovo };
     const r = sessao.revogadaEm
       ? { affected: 0 }
       : await this.sessoes.update(
           { jti: sessao.jti, revogadaEm: IsNull() },
           { revogadaEm: new Date(), substituidaPor: jtiNovo },
         );
+    // Corrida com outra aba que rotacionou entre o SELECT e o UPDATE.
+    if (
+      !r.affected &&
+      !sessao.revogadaEm &&
+      rotacionadaAgora(
+        await this.sessoes.findOne({ where: { jti: sessao.jti } }),
+      )
+    ) {
+      return { claims: p, jtiNovo };
+    }
     if (!r.affected) {
       await this.revogarDaPessoa(p.sub);
       this.logger.warn(

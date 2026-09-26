@@ -6,7 +6,11 @@ import {
   diretorioMigrations,
   lerMigrations,
 } from 'src/database/database.providers';
-import { aplicarMigrations, ExecutorSql } from 'src/database/migrations-runner';
+import {
+  aguardarSchemas,
+  aplicarMigrations,
+  ExecutorSql,
+} from 'src/database/migrations-runner';
 
 /**
  * Migrations da plataforma contra um Postgres real, no banco `plat_int`
@@ -240,6 +244,8 @@ describeDb('Migrations da plataforma (plat_int)', () => {
       '02-acessos-sessoes.sql',
       '03-auditoria.sql',
       '04-backfill-clinic.sql',
+      '05-trial-inadimplencia-cobranca.sql',
+      '06-rate-limit.sql',
     ]);
     expect(await migrarPlataforma()).toEqual([]);
     estruturaVazio = await estrutura();
@@ -258,6 +264,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
         'auditoria',
         'clientes',
         'faturas',
+        'rate_limit',
         'sessoes',
         'usuarios',
       ]);
@@ -293,6 +300,63 @@ describeDb('Migrations da plataforma (plat_int)', () => {
       await conferirBackfill();
       expect(await estrutura()).toEqual(estruturaVazio);
     },
+  );
+
+  comClinic(
+    'B4: banco vazio com a plataforma subindo ANTES do Clinic — ela espera o schema do produto',
+    async () => {
+      await resetar();
+      const plat = await conectar('crommos,public');
+      const plataforma = aguardarSchemas(plat, ['clinic'], {
+        intervaloMs: 100,
+        tentativas: 600,
+        log: silencio,
+      }).then(() =>
+        aplicarMigrations(
+          plat,
+          lerMigrations(diretorioMigrations()),
+          undefined,
+          silencio,
+        ),
+      );
+      try {
+        await new Promise((r) => setTimeout(r, 500));
+        const c = await conectar('clinic,crommos,public');
+        try {
+          const [{ n }] = await c.query<{ n: number }[]>(
+            `SELECT count(*)::int AS n FROM pg_namespace WHERE nspname = 'crommos'`,
+          );
+          expect(n).toBe(0); // a plataforma ainda não criou nada
+          await aplicarMigrations(
+            c,
+            lerMigrations(DIR_CLINIC),
+            CONTROLE_CLINIC,
+            silencio,
+          );
+        } finally {
+          await c.end();
+        }
+        await plataforma;
+      } finally {
+        await plat.end();
+      }
+      const c = await conectar('public');
+      try {
+        const [{ n }] = await c.query<{ n: number }[]>(
+          `SELECT count(*)::int AS n FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name <> '_sql_migrations'`,
+        );
+        expect(n).toBe(0);
+        const [{ users }] = await c.query<{ users: string | null }[]>(
+          `SELECT to_regclass('clinic.users')::text AS users`,
+        );
+        expect(users).toBe('clinic.users');
+      } finally {
+        await c.end();
+      }
+    },
+    // Migrations reais do Clinic (~90 arquivos): folga para CI carregado.
+    300_000,
   );
 
   it('retrato do schema do Clinic (fixture): compatível e com backfill', async () => {

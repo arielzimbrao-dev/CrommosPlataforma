@@ -194,7 +194,13 @@ describeDb('Auth (integração)', () => {
       const c2 = cookieRefresh(r1.headers);
       expect(c2).not.toBe(c1);
 
-      // Reuso do c1 (já rotacionado): 401 e revoga tudo (inclusive o c2).
+      // Reuso do c1 (rotacionado há mais que a tolerância de abas): 401 e
+      // revoga tudo (inclusive o c2).
+      await ds.query(
+        `UPDATE crommos.sessoes SET revogada_em = now() - interval '1 minute'
+          WHERE usuario_id = $1 AND substituida_por IS NOT NULL`,
+        [ana.id],
+      );
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .set('Cookie', c1)
@@ -209,6 +215,24 @@ describeDb('Auth (integração)', () => {
         [ana.id],
       );
       expect(n).toBeGreaterThanOrEqual(1);
+    });
+
+    it('B1: duas abas renovando com o mesmo cookie → as duas ganham sessão, nada é revogado', async () => {
+      const l = await login({ email: 'bia@exemplo.com', tenantId: T2 }).expect(
+        200,
+      );
+      const c = cookieRefresh(l.headers);
+      const [a, b] = await Promise.all([
+        request(app.getHttpServer()).post('/auth/refresh').set('Cookie', c),
+        request(app.getHttpServer()).post('/auth/refresh').set('Cookie', c),
+      ]);
+      expect([a.status, b.status]).toEqual([200, 200]);
+      for (const r of [a, b]) {
+        await request(app.getHttpServer())
+          .post('/auth/refresh')
+          .set('Cookie', cookieRefresh(r.headers))
+          .expect(200);
+      }
     });
 
     it('sem cookie ou com lixo → 401', async () => {

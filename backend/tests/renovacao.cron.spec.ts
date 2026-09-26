@@ -29,8 +29,15 @@ describe('RenovacaoCron', () => {
       .fn()
       .mockResolvedValueOnce(0)
       .mockResolvedValueOnce(2);
+    const atualizarInadimplencia = jest
+      .fn()
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
     const { ds, query } = fakeDs(true);
-    const cron = new RenovacaoCron({ renovarVencidas } as never, ds);
+    const cron = new RenovacaoCron(
+      { renovarVencidas, atualizarInadimplencia } as never,
+      ds,
+    );
 
     await cron.run();
     expect(log).not.toHaveBeenCalled();
@@ -41,6 +48,10 @@ describe('RenovacaoCron', () => {
 
     await cron.run();
     expect(log).toHaveBeenCalledWith('Faturas de renovação geradas: 2');
+    expect(log).toHaveBeenCalledWith(
+      'Assinaturas com a inadimplência atualizada: 1',
+    );
+    expect(atualizarInadimplencia).toHaveBeenCalledTimes(2);
   });
 
   it('não renova quando outra réplica detém o lock', async () => {

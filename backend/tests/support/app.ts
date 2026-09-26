@@ -29,7 +29,7 @@ export async function criarApp(
     .overrideProvider(MailService)
     .useValue(mail)
     .compile();
-  const app = ref.createNestApplication();
+  const app = ref.createNestApplication({ rawBody: true });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

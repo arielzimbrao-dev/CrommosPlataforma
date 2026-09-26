@@ -30,7 +30,17 @@ Testes: `npm test` (unit); `RUN_DB_TESTS=true npm test` inclui a integração
 ## Deploy
 
 Aplicação Docker no Coolify (`Base Directory = backend`, `Dockerfile`), no mesmo
-Postgres dos produtos. Ordem na primeira subida sobre um banco que já roda o
-Clinic: o Clinic precisa estar com as migrations 68/69 aplicadas (schema
-`crommos` já criado por ele); a plataforma então cria `acessos`, `sessoes`,
-`auditoria` e faz o backfill a partir do `clinic`.
+Postgres dos produtos. **Healthcheck: `GET /health/ready`** (confere o banco;
+`/health` é só liveness). Pode rodar com **várias réplicas**: rate limit no
+Postgres, jobs e migrations com advisory lock, sem estado em memória.
+
+Ordem de subida: não importa. Em produção, antes das migrations a plataforma
+espera o schema de cada produto configurado existir (`DB_AGUARDAR_SCHEMAS`
+sobrescreve). Variáveis novas do MVP (ver `backend/.env.example`):
+`RESEND_API_KEY`/`EMAIL_FROM` (e-mail), `ABACATEPAY_API_KEY` +
+`ABACATEPAY_WEBHOOK_SECRET` (cobrança; cadastre o webhook
+`https://<plataforma>/webhooks/abacatepay?webhookSecret=<segredo>` no painel da
+AbacatePay), `DIAS_TOLERANCIA_INADIMPLENCIA` (padrão 7) e
+`PROVISIONAMENTO_KEY_<PRODUTO>` (chave própria do sentido plataforma → produto).
+Usuário de banco próprio (`plataforma_app`, dono do `crommos`): script no
+repositório do Clinic (`backend/database/manual/roles-por-schema.sql`).

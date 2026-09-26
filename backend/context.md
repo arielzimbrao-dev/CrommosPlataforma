@@ -17,10 +17,11 @@ Portado do backend do Clinic (auth, billing, runner de migrations, e-mail), sem 
 | `src/auth` | Login único, tokens RS256 (`SessoesService`), refresh com rotação e reuso, senha, confirmação de e-mail, `JwtAuthGuard` + `AcessoGuard` (`@ExigeAcesso(...papeis)`) |
 | `src/signup` | `POST /signup`: transação + provisionamento no produto (`ProvisionamentoClient`) com compensação |
 | `src/interno` | API interna para os produtos (`ServicoKeyGuard`, `X-Servico-Key` → produto): acessos, convite, pessoa |
-| `src/billing` | Catálogo, `AssinaturaService` (pró-rata, faturas, renovação), baixa pelo backoffice |
-| `src/mail` | `MailService` + `EmailProvider` (SendPulse; stub sem credenciais) |
+| `src/billing` | Catálogo, `AssinaturaService` (pró-rata, faturas, renovação, fim do trial, inadimplência), `situacao.ts` (modo leitura), `CobrancaService` + `AbacatePayClient` (link de pagamento e webhook), baixa pelo backoffice |
+| `src/mail` | `MailService` + `EmailProvider` (Resend, API HTTP; stub sem `RESEND_API_KEY`) |
+| `src/conta` | LGPD da pessoa: `GET /conta/dados` (exportar) e `POST /conta/excluir` (anonimiza; recusa o último admin) |
 | `src/audit` | `AuditService.registrar()` → `crommos.auditoria` |
-| `src/common` | Produtos (`configProduto`, `produtoDaChave`), segredo (sha256, comparação em tempo constante), CPF/CNPJ, datas BR, lock global, filtro de exceções, health, CORS |
+| `src/common` | Produtos (`configProduto`, `produtoDaChave`), segredo (sha256, comparação em tempo constante), CPF/CNPJ, datas BR, lock global, filtro de exceções, health (`/health`, `/health/ready`), CORS, `ThrottlerPostgres` (rate limit compartilhado), `log/` (logs JSON + request-id) |
 | `tests/` | Unit (`*.spec.ts`) e integração (`*.integration.spec.ts`); `tests/support` (app, dados, stub HTTP do produto) |
 
 ## Como rodar
@@ -64,7 +65,18 @@ npm ci && npm run start:dev
 - **Migrations:** compatíveis com o banco em que o Clinic criou `crommos` (68/69) — mesmos nomes de
   constraints e índices (o spec compara a estrutura). A `04` lê `clinic.users`/`clinic.clinicas` uma
   vez (backfill), protegida por `to_regclass`. Num banco vazio, a plataforma deve subir **depois** que
-  o produto criar o schema dele (senão o `search_path` do produto pode cair no `crommos`).
+  o produto criar o schema dele (senão o `search_path` do produto pode cair no `crommos`) — o boot
+  **espera** por isso sozinho (`aguardarSchemas`, `DB_AGUARDAR_SCHEMAS`).
 - **Produção:** `FRONTEND_URL` e `API_URL` obrigatórias; CORS nunca abre com a lista vazia; chaves
   RS256 conferidas no boot.
 - Dinheiro em `numeric`, conta em centavos inteiros. Datas "só dia" em `America/Sao_Paulo`.
+- **Refresh em várias abas (B1):** refresh rotacionado há < 10 s (`TOLERANCIA_ROTACAO_MS`) ganha
+  par novo; depois disso é reuso.
+- **Modo leitura:** trial vencido sem confirmação (`trial_confirmado_em`) ou `inadimplente_desde`
+  (job diário depois da renovação; `baixar()` recalcula o tenant). `PATCH /assinatura` confirma o
+  trial; se ele já venceu, abre o 1º ciclo pago hoje. Sem assinatura = nenhum módulo.
+- **AbacatePay:** o link é criado só quando alguém clica em pagar (`/assinatura/faturas/:id/pagamento`).
+  O webhook precisa do corpo cru (`rawBody: true` no `main.ts` e no `criarApp` dos testes).
+- **Réplicas:** rate limit em `crommos.rate_limit` (`ThrottlerPostgres`), jobs com `comLockGlobal`,
+  migrations com advisory lock; nada de estado em memória entre requisições.
+- **Banco vazio (B4):** `aguardarSchemas` antes das migrations (produção: produtos configurados).

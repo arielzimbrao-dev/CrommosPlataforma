@@ -60,3 +60,28 @@ export class SignupDto {
   @Length(1, 20)
   termosVersao?: string;
 }
+
+/** R2: outra clínica na conta de quem já está logado (sem dados da pessoa). */
+export class NovaClinicaDto {
+  @IsIn(PRODUTOS, { message: 'produto deve ser clinic, odonto ou vet.' })
+  produto!: Produto;
+
+  @IsIn(['pf', 'pj'], { message: 'tipoCliente deve ser pf ou pj.' })
+  tipoCliente!: 'pf' | 'pj';
+
+  @IsString()
+  @IsDocumentoCliente('tipoCliente')
+  documento!: string;
+
+  @IsString()
+  @Length(2, 255)
+  nomeClinica!: string;
+
+  @IsOptional()
+  @Matches(/^\d{14}$/, { message: 'CNPJ deve ter 14 dígitos.' })
+  cnpj?: string;
+
+  @IsString()
+  @Length(2, 255)
+  nomeUnidade!: string;
+}

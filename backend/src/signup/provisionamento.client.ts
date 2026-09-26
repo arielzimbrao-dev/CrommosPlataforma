@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { cabecalhoRequestId } from '../common/log/request-id';
 import type { ConfigProduto } from '../common/produtos';
 
 /** Corpo do `POST {produto}/interno/tenants` (docs/contrato.md). */
@@ -25,7 +26,8 @@ export class ProvisionamentoClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Servico-Key': cfg.chaveServico,
+        'X-Servico-Key': cfg.chaveProvisionamento,
+        ...cabecalhoRequestId(),
       },
       body: JSON.stringify(corpo),
       signal: AbortSignal.timeout(TIMEOUT_MS),

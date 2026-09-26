@@ -5,8 +5,8 @@ export type TipoCliente = 'pf' | 'pj';
 
 /**
  * Cliente = quem paga (schema `crommos`, migration 01). Identificado pelo
- * CPF do dono (`pf`) ou pelo CNPJ da matriz (`pj`), só dígitos. Tem uma
- * assinatura por produto; as clínicas dele podem ter CNPJs próprios
+ * CPF do dono (`pf`) ou pelo CNPJ da matriz (`pj`), só dígitos. Pode ter
+ * várias clínicas (assinaturas) do mesmo produto; as clínicas dele podem ter CNPJs próprios
  * (`unidades.cnpj`). Ver docs/contrato.md.
  */
 @Entity({ name: 'clientes', schema: 'crommos' })
@@ -23,4 +23,8 @@ export class Cliente extends BaseEntity {
 
   @Column({ name: 'email_cobranca', type: 'varchar', nullable: true })
   emailCobranca?: string | null;
+
+  /** Cliente na AbacatePay (criado na 1ª cobrança). */
+  @Column({ name: 'abacatepay_id', type: 'varchar', nullable: true })
+  abacatepayId?: string | null;
 }

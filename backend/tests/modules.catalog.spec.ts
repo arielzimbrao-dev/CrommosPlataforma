@@ -52,7 +52,13 @@ describe('calcularValor (fórmula de precificação)', () => {
     // explícito no catálogo para a UI mostrar "a definir" (não "grátis")
     expect(MODULES.filter((m) => m.precoADefinir).map((m) => m.code)).toEqual([
       ModuleCode.Convenio,
+      ModuleCode.Estoque,
     ]);
+  });
+
+  it('Estoque entra no catálogo com preço a definir (não altera o valor)', () => {
+    expect(MODULE_CODES).toContain(ModuleCode.Estoque);
+    expect(calcularValor([ModuleCode.Estoque], 3, PlanoPeriodo.Mensal)).toBe(0);
   });
 });
 

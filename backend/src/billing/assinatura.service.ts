@@ -36,6 +36,13 @@ import {
   renovarCiclo,
   somarDias,
 } from './pro-rata';
+import {
+  MotivoLeitura,
+  bloqueiaEm,
+  diasTolerancia,
+  motivoLeitura,
+  trialExpirado,
+} from './situacao';
 
 /** Quem está agindo sobre a assinatura (das claims do token). */
 export interface Ator {
@@ -55,6 +62,28 @@ export interface AssinaturaView {
   emTrialAte: string | null;
   emTrial: boolean;
   saldoCredito: number;
+  /** O admin já confirmou módulos/usuários (fim do trial). */
+  trialConfirmado: boolean;
+  /** `null` = normal; senão o motivo do modo leitura. */
+  modoLeitura: MotivoLeitura | null;
+  /** Fatura pendente mais antiga já vencida (aviso), ou `null`. */
+  faturaVencida: FaturaVencida | null;
+}
+
+export interface FaturaVencida {
+  id: string;
+  vencimento: string;
+  valorLiquido: number;
+  /** Dia em que a clínica entra em modo leitura se não pagar. */
+  bloqueiaEm: string;
+}
+
+/** Situação para todos os papéis (banner do produto, `GET /modulos`). */
+export interface SituacaoAssinatura {
+  modoLeitura: MotivoLeitura | null;
+  emTrialAte: string | null;
+  trialConfirmado: boolean;
+  faturaVencida: Pick<FaturaVencida, 'vencimento' | 'bloqueiaEm'> | null;
 }
 
 export interface AlteracaoAssinatura extends AssinaturaView {
@@ -135,15 +164,67 @@ export class AssinaturaService {
 
   async getCurrent(ator: Ator, hoje = hojeISO()): Promise<AssinaturaView> {
     const a = await this.buscar(ator);
-    if (a) return this.view(a, hoje);
-    // Sem assinatura (tenant legado): todos os módulos, como no gating.
+    if (a) return this.view(a, hoje, await this.faturaVencida(a, hoje));
+    // Sem assinatura: fail-closed (nenhum módulo), como no gating (B5).
     return {
-      ...this.valores(MODULE_CODES, 1, PlanoPeriodo.Mensal),
+      ...this.valores([], 1, PlanoPeriodo.Mensal),
       ciclo: null,
       emTrialAte: null,
       emTrial: false,
       saldoCredito: 0,
+      trialConfirmado: false,
+      modoLeitura: null,
+      faturaVencida: null,
     };
+  }
+
+  /** Situação (modo leitura e aviso de fatura) para qualquer papel. */
+  async situacao(
+    ator: Pick<Ator, 'produto' | 'tenantId'>,
+    hoje = hojeISO(),
+  ): Promise<SituacaoAssinatura> {
+    const a = await this.buscar(ator);
+    if (!a) {
+      return {
+        modoLeitura: null,
+        emTrialAte: null,
+        trialConfirmado: false,
+        faturaVencida: null,
+      };
+    }
+    const f = await this.faturaVencida(a, hoje);
+    return {
+      modoLeitura: motivoLeitura(a, hoje),
+      emTrialAte: a.emTrialAte,
+      trialConfirmado: !!a.trialConfirmadoEm,
+      faturaVencida: f && {
+        vencimento: f.vencimento,
+        bloqueiaEm: f.bloqueiaEm,
+      },
+    };
+  }
+
+  private async faturaVencida(
+    a: Assinatura,
+    hoje: string,
+  ): Promise<FaturaVencida | null> {
+    const f = await this.faturas.findOne({
+      where: {
+        tenantId: a.tenantId,
+        assinaturaId: a.id,
+        status: 'pendente',
+        vencimento: LessThanOrEqual(hoje),
+      },
+      order: { vencimento: 'ASC' },
+    });
+    return f
+      ? {
+          id: f.id,
+          vencimento: f.vencimento,
+          valorLiquido: f.valorLiquido,
+          bloqueiaEm: bloqueiaEm(f.vencimento),
+        }
+      : null;
   }
 
   /**
@@ -256,6 +337,13 @@ export class AssinaturaService {
         return { a, ajuste: null, fatura, abatidas: [] as Fatura[] };
       }
 
+      // Fim do trial: salvar a assinatura = o admin confirmou módulos/usuários.
+      // Trial já expirado (modo leitura, nada faturado): abre o 1º ciclo pago
+      // hoje, com a configuração escolhida.
+      const expirado = trialExpirado(atual, hoje) && atual.cicloFim <= hoje;
+      if (atual.emTrialAte && !atual.trialConfirmadoEm) {
+        atual.trialConfirmadoEm = new Date();
+      }
       const ajuste = this.proRata(atual, valorNovo, hoje);
       atual.modulosAtivos = modulosAtivos;
       atual.numeroUsuarios = numeroUsuarios;
@@ -263,7 +351,28 @@ export class AssinaturaService {
       atual.updatedBy = usuarioId;
       let fatura: Fatura | null = null;
       let abatidas: Fatura[] = [];
-      if (ajuste.tipo === 'credito') {
+      if (expirado) {
+        const ciclo = renovarCiclo({
+          cicloFim: hoje,
+          plano,
+          valorMensal: valorNovo,
+          saldoCredito: atual.saldoCredito,
+        });
+        atual.cicloInicio = ciclo.cicloInicio;
+        atual.cicloFim = ciclo.cicloFim;
+        atual.saldoCredito = ciclo.saldoCredito;
+        fatura = await this.gravarFatura(em, atual, {
+          tipo: 'ciclo',
+          periodoInicio: ciclo.cicloInicio,
+          periodoFim: ciclo.cicloFim,
+          valorBruto: ciclo.valorBruto,
+          creditoAplicado: ciclo.creditoAplicado,
+          valorLiquido: ciclo.valorLiquido,
+          vencimento: hoje,
+          itens: { motivo: 'fim-trial', modulosAtivos, numeroUsuarios, plano },
+          createdBy: usuarioId,
+        });
+      } else if (ajuste.tipo === 'credito') {
         const credito = await this.abaterPendentes(
           em,
           atual,
@@ -299,6 +408,8 @@ export class AssinaturaService {
       return { a, ajuste, fatura, abatidas };
     });
 
+    // A redução pode ter quitado/cancelado pendentes: situação na hora.
+    if (r.abatidas.length) await this.atualizarInadimplencia(hoje, tenantId);
     await this.log(ator, 'update', 'assinatura', r.a.id);
     if (r.fatura) await this.log(ator, 'create', 'fatura', r.fatura.id);
     for (const f of r.abatidas) {
@@ -309,15 +420,22 @@ export class AssinaturaService {
         f.id,
       );
     }
-    return { ...this.view(r.a, hoje), ajuste: r.ajuste, fatura: r.fatura };
+    return {
+      ...this.view(r.a, hoje, await this.faturaVencida(r.a, hoje)),
+      ajuste: r.ajuste,
+      fatura: r.fatura,
+    };
   }
 
-  /** Módulos ativos (gating). Sem assinatura → todos (tenant legado). */
+  /**
+   * Módulos ativos (gating). Sem assinatura (ausente ou removida) → nenhum:
+   * fail-closed (B5).
+   */
   async getModulosAtivos(
     ator: Pick<Ator, 'produto' | 'tenantId'>,
   ): Promise<ModuleCode[]> {
     const a = await this.buscar(ator);
-    return a ? a.modulosAtivos : MODULE_CODES;
+    return a ? a.modulosAtivos : [];
   }
 
   async listarFaturas(
@@ -335,28 +453,72 @@ export class AssinaturaService {
   }
 
   /**
-   * Baixa de fatura pelo backoffice da Crommos (`X-Plataforma-Key`).
-   * Provisório até o webhook da AbacatePay. O UPDATE condicional evita baixa
-   * dupla e corrida com a redução (que trava a linha).
+   * Baixa manual pelo backoffice da Crommos (`X-Plataforma-Key`): contingência
+   * do webhook da AbacatePay. 409 se não estiver pendente.
    */
   async pagarPelaPlataforma(id: string): Promise<Fatura> {
+    const { fatura, baixou } = await this.baixar(id, 'pagar-plataforma');
+    if (!baixou) {
+      throw new ConflictException('Só é possível pagar uma fatura pendente.');
+    }
+    return fatura;
+  }
+
+  /**
+   * Baixa idempotente (backoffice ou webhook): o UPDATE condicional evita
+   * baixa dupla e corrida com a redução (que trava a linha). Reativa a clínica
+   * na hora se ela estava em modo leitura por inadimplência.
+   */
+  async baixar(
+    id: string,
+    action: 'pagar-plataforma' | 'pagar-abacatepay',
+    hoje = hojeISO(),
+  ): Promise<{ fatura: Fatura; baixou: boolean }> {
     const r = await this.faturas.update(
       { id, status: 'pendente' },
       { status: 'paga', pagoEm: new Date() },
     );
     const f = await this.faturas.findOne({ where: { id } });
     if (!f) throw new NotFoundException('Fatura não encontrada.');
-    if (!r.affected) {
-      throw new ConflictException('Só é possível pagar uma fatura pendente.');
-    }
+    if (!r.affected) return { fatura: f, baixou: false };
+    await this.atualizarInadimplencia(hoje, f.tenantId);
     await this.audit.registrar({
-      usuarioId: null, // ator = backoffice (sem pessoa)
+      usuarioId: null, // ator = backoffice/AbacatePay (sem pessoa)
       tenantId: f.tenantId,
-      action: 'pagar-plataforma',
+      action,
       resource: 'fatura',
       resourceId: id,
     });
-    return f;
+    return { fatura: f, baixou: true };
+  }
+
+  /**
+   * Marca (e desmarca) a inadimplência: fatura pendente com vencimento há
+   * mais de `DIAS_TOLERANCIA_INADIMPLENCIA` dias. Job diário e cada baixa
+   * (só o tenant). Devolve quantas assinaturas mudaram.
+   */
+  async atualizarInadimplencia(
+    hoje = hojeISO(),
+    tenantId?: string,
+  ): Promise<number> {
+    const vencida = `EXISTS (SELECT 1 FROM crommos.faturas f
+        WHERE f.assinatura_id = a.id AND f.tenant_id = a.tenant_id
+          AND f.status = 'pendente' AND f.deleted_at IS NULL
+          AND f.vencimento < $1::date - $2::int)`;
+    const doTenant = tenantId ? 'AND a.tenant_id = $3' : '';
+    const params = [hoje, diasTolerancia(), ...(tenantId ? [tenantId] : [])];
+    const marcou = await this.ds.query<[unknown, number] | undefined>(
+      `UPDATE crommos.assinaturas a SET inadimplente_desde = $1::date
+        WHERE a.deleted_at IS NULL AND a.inadimplente_desde IS NULL
+          ${doTenant} AND ${vencida}`,
+      params,
+    );
+    const desmarcou = await this.ds.query<[unknown, number] | undefined>(
+      `UPDATE crommos.assinaturas a SET inadimplente_desde = NULL
+        WHERE a.inadimplente_desde IS NOT NULL ${doTenant} AND NOT ${vencida}`,
+      params,
+    );
+    return (marcou?.[1] ?? 0) + (desmarcou?.[1] ?? 0);
   }
 
   /**
@@ -379,7 +541,10 @@ export class AssinaturaService {
           lock: { mode: 'pessimistic_write' },
         });
         let n = 0;
-        while (a && a.cicloFim <= hoje) {
+        // Trial sem confirmação não fatura: a clínica fica em modo leitura.
+        // ponytail: esses tenants voltam na varredura todo dia; filtre no SQL
+        // se forem muitos.
+        while (a && a.cicloFim <= hoje && !trialExpirado(a, a.cicloFim)) {
           const valorMensal = calcularValor(
             a.modulosAtivos,
             a.numeroUsuarios,
@@ -461,6 +626,9 @@ export class AssinaturaService {
     for (const [i, novo] of r.faturas.entries()) {
       if (novo.abatido === 0) continue;
       const f = pendentes[i];
+      // O checkout da AbacatePay tinha o valor antigo: um novo sob demanda.
+      f.cobrancaId = null;
+      f.cobrancaUrl = null;
       const reducoes = (f.itens?.reducoes as unknown[] | undefined) ?? [];
       Object.assign(f, {
         valorBruto: novo.valorBruto,
@@ -536,13 +704,20 @@ export class AssinaturaService {
     };
   }
 
-  private view(a: Assinatura, hoje: string): AssinaturaView {
+  private view(
+    a: Assinatura,
+    hoje: string,
+    faturaVencida: FaturaVencida | null,
+  ): AssinaturaView {
     return {
       ...this.valores(a.modulosAtivos, a.numeroUsuarios, a.plano),
       ciclo: { inicio: a.cicloInicio, fim: a.cicloFim },
       emTrialAte: a.emTrialAte,
       emTrial: emTrial(a.emTrialAte, hoje),
       saldoCredito: a.saldoCredito,
+      trialConfirmado: !!a.trialConfirmadoEm,
+      modoLeitura: motivoLeitura(a, hoje),
+      faturaVencida,
     };
   }
 }
