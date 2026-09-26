@@ -62,4 +62,12 @@ export class Assinatura extends BaseEntity {
     transformer: numericTransformer,
   })
   saldoCredito!: number;
+
+  /** O admin confirmou módulos/usuários (sem isso, o fim do trial = leitura). */
+  @Column({ name: 'trial_confirmado_em', type: 'timestamptz', nullable: true })
+  trialConfirmadoEm?: Date | null;
+
+  /** Inadimplente (fatura vencida além da tolerância) desde: modo leitura. */
+  @Column({ name: 'inadimplente_desde', type: 'date', nullable: true })
+  inadimplenteDesde?: string | null;
 }

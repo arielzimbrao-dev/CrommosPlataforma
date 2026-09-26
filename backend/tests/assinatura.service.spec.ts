@@ -53,6 +53,7 @@ function make(atual: Assinatura | null = assinatura()) {
   };
   const ds = {
     transaction: jest.fn((cb: (m: typeof em) => unknown) => cb(em)),
+    query: jest.fn().mockResolvedValue([[], 0]),
   };
   const repo = {
     findOne: jest.fn().mockResolvedValue(atual),
@@ -75,9 +76,9 @@ function make(atual: Assinatura | null = assinatura()) {
 }
 
 describe('AssinaturaService — gating e leitura', () => {
-  it('sem assinatura → todos os módulos (grandfather)', async () => {
+  it('sem assinatura → nenhum módulo (fail-closed, B5)', async () => {
     const { svc, repo } = make(null);
-    await expect(svc.getModulosAtivos(ATOR)).resolves.toEqual(MODULE_CODES);
+    await expect(svc.getModulosAtivos(ATOR)).resolves.toEqual([]);
     expect(repo.findOne).toHaveBeenCalledWith({
       where: { produto: 'clinic', tenantId: TENANT },
     });
@@ -90,11 +91,12 @@ describe('AssinaturaService — gating e leitura', () => {
     ]);
   });
 
-  it('getCurrent sem assinatura → view grandfather sem ciclo', async () => {
+  it('getCurrent sem assinatura → fail-closed, sem ciclo', async () => {
     const { svc } = make(null);
     const view = await svc.getCurrent(ATOR, HOJE);
-    expect(view.modulosAtivos).toEqual(MODULE_CODES);
-    expect(view.valor).toBe(130);
+    expect(view.modulosAtivos).toEqual([]);
+    expect(view.valor).toBe(0);
+    expect(view.modoLeitura).toBeNull();
     expect(view.ciclo).toBeNull();
     expect(view.saldoCredito).toBe(0);
     expect(view.emTrial).toBe(false);
@@ -110,6 +112,97 @@ describe('AssinaturaService — gating e leitura', () => {
     expect(view.emTrial).toBe(true);
     expect(view.emTrialAte).toBe('2026-09-20');
     expect(view.saldoCredito).toBe(42.5);
+    expect(view.trialConfirmado).toBe(false);
+    expect(view.modoLeitura).toBeNull();
+    expect(view.faturaVencida).toBeNull();
+  });
+
+  it('trial acabou sem confirmação → modo leitura (trial_expirado)', async () => {
+    const { svc } = make(
+      assinatura({
+        cicloInicio: '2026-09-01',
+        cicloFim: '2026-09-15',
+        emTrialAte: '2026-09-15',
+      }),
+    );
+    const view = await svc.getCurrent(ATOR, HOJE);
+    expect(view.modoLeitura).toBe('trial_expirado');
+    expect((await svc.situacao(ATOR, HOJE)).modoLeitura).toBe('trial_expirado');
+  });
+
+  it('fatura vencida: aviso com o dia do bloqueio; inadimplente → leitura', async () => {
+    const { svc, faturas } = make(
+      assinatura({ inadimplenteDesde: '2026-09-10' }),
+    );
+    faturas.findOne.mockResolvedValue({
+      id: 'f9',
+      vencimento: '2026-09-01',
+      valorLiquido: 150,
+    });
+    const view = await svc.getCurrent(ATOR, HOJE);
+    expect(view.faturaVencida).toEqual({
+      id: 'f9',
+      vencimento: '2026-09-01',
+      valorLiquido: 150,
+      bloqueiaEm: '2026-09-09',
+    });
+    expect(view.modoLeitura).toBe('inadimplencia');
+    const s = await svc.situacao(ATOR, HOJE);
+    expect(s).toEqual({
+      modoLeitura: 'inadimplencia',
+      emTrialAte: null,
+      trialConfirmado: false,
+      faturaVencida: { vencimento: '2026-09-01', bloqueiaEm: '2026-09-09' },
+    });
+  });
+
+  it('situacao sem assinatura: normal, sem aviso', async () => {
+    const { svc } = make(null);
+    await expect(svc.situacao(ATOR, HOJE)).resolves.toEqual({
+      modoLeitura: null,
+      emTrialAte: null,
+      trialConfirmado: false,
+      faturaVencida: null,
+    });
+  });
+});
+
+describe('AssinaturaService — fim do trial (confirmação)', () => {
+  it('salvar durante o trial confirma; sem fatura (a renovação fatura no fim)', async () => {
+    const trial = assinatura({
+      emTrialAte: '2026-09-30',
+      cicloFim: '2026-09-30',
+    });
+    const { svc, fatRepo, assinRepo } = make(trial);
+    const r = await svc.upsert(ATOR, { numeroUsuarios: 5 }, HOJE);
+    expect(assinRepo.save.mock.calls[0][0].trialConfirmadoEm).toEqual(
+      expect.any(Date),
+    );
+    expect(r.trialConfirmado).toBe(true);
+    expect(fatRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('trial expirado (modo leitura): confirmar abre o 1º ciclo hoje e fatura', async () => {
+    const trial = assinatura({
+      cicloInicio: '2026-09-01',
+      cicloFim: '2026-09-15',
+      emTrialAte: '2026-09-15',
+    });
+    const { svc, fatRepo } = make(trial);
+    const r = await svc.upsert(
+      ATOR,
+      { modulosAtivos: [ModuleCode.Agenda], numeroUsuarios: 2 },
+      HOJE,
+    );
+    expect(r.modoLeitura).toBeNull();
+    expect(r.ciclo).toEqual({ inicio: HOJE, fim: '2026-10-16' });
+    expect(fatRepo.save.mock.calls[0][0]).toMatchObject({
+      tipo: 'ciclo',
+      periodoInicio: HOJE,
+      valorBruto: 60,
+      vencimento: HOJE,
+      status: 'pendente',
+    });
   });
 });
 
@@ -442,7 +535,7 @@ describe('AssinaturaService — faturas', () => {
   });
 
   it('pagarPelaPlataforma: baixa fora do tenant, condicional e auditada (N-01)', async () => {
-    const { svc, faturas, audit } = make();
+    const { svc, faturas, audit, ds } = make();
     const paga = { id: 'f1', tenantId: TENANT, status: 'paga' };
     faturas.findOne.mockResolvedValue(paga);
     const f = await svc.pagarPelaPlataforma('f1');
@@ -458,6 +551,30 @@ describe('AssinaturaService — faturas', () => {
       resource: 'fatura',
       resourceId: 'f1',
     });
+    // Reativa na hora: recalcula a inadimplência do tenant.
+    expect(ds.query).toHaveBeenCalledWith(
+      expect.stringContaining('inadimplente_desde = NULL'),
+      [expect.any(String), 7, TENANT],
+    );
+  });
+
+  it('baixar é idempotente: já paga → baixou=false, sem auditoria', async () => {
+    const { svc, faturas, audit } = make();
+    faturas.update.mockResolvedValue({ affected: 0 });
+    faturas.findOne.mockResolvedValue({ id: 'f1', status: 'paga' });
+    await expect(svc.baixar('f1', 'pagar-abacatepay')).resolves.toMatchObject({
+      baixou: false,
+    });
+    expect(audit.registrar).not.toHaveBeenCalled();
+  });
+
+  it('atualizarInadimplencia: marca e desmarca (todos os tenants) e soma as linhas', async () => {
+    const { svc, ds } = make();
+    ds.query.mockResolvedValueOnce([[], 2]).mockResolvedValueOnce([[], 1]);
+    await expect(svc.atualizarInadimplencia(HOJE)).resolves.toBe(3);
+    expect(ds.query.mock.calls[0][1]).toEqual([HOJE, 7]);
+    ds.query.mockResolvedValue(undefined);
+    await expect(svc.atualizarInadimplencia(HOJE)).resolves.toBe(0);
   });
 
   it('pagarPelaPlataforma: 404 inexistente e 409 se não estiver pendente', async () => {
@@ -537,11 +654,23 @@ describe('AssinaturaService.renovarVencidas', () => {
     });
   });
 
-  it('recupera ciclos atrasados (um por período) e fim do trial abre o 1º ciclo', async () => {
+  it('trial sem confirmação não fatura (modo leitura)', async () => {
     const trial = assinatura({
       cicloInicio: '2026-07-20',
       cicloFim: '2026-08-03',
       emTrialAte: '2026-08-03',
+    });
+    const { svc, fatRepo } = make(trial);
+    await expect(svc.renovarVencidas(HOJE)).resolves.toBe(0);
+    expect(fatRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('recupera ciclos atrasados (um por período) e fim do trial confirmado abre o 1º ciclo', async () => {
+    const trial = assinatura({
+      cicloInicio: '2026-07-20',
+      cicloFim: '2026-08-03',
+      emTrialAte: '2026-08-03',
+      trialConfirmadoEm: new Date(),
     });
     const { svc, fatRepo } = make(trial);
     const n = await svc.renovarVencidas(HOJE);

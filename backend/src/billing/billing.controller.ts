@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import {
@@ -9,6 +20,7 @@ import {
 import type { ITokenPayload } from '../common/interfaces/token-payload.interface';
 import { PaginacaoDto } from '../common/paginacao';
 import { AssinaturaService, Ator } from './assinatura.service';
+import { CobrancaService } from './cobranca.service';
 import { SimularDto, UpdateAssinaturaDto } from './dtos/billing.dtos';
 import { MODULES } from './modules.catalog';
 
@@ -26,20 +38,46 @@ const ator = (u: ITokenPayload): Ator => ({
 @ApiBearerAuth()
 @Controller()
 export class BillingController {
-  constructor(private readonly assinatura: AssinaturaService) {}
+  constructor(
+    private readonly assinatura: AssinaturaService,
+    private readonly cobranca: CobrancaService,
+    private readonly config: ConfigService,
+  ) {}
 
-  /** Catálogo de módulos + os ativos do tenant. */
+  /** Catálogo de módulos + os ativos do tenant + a situação (modo leitura). */
   @ExigeAcesso()
   @Get('modulos')
   async modulos(@CurrentUser() u: ITokenPayload) {
-    const ativos = await this.assinatura.getModulosAtivos(ator(u));
-    return { catalogo: MODULES, ativos };
+    const [ativos, situacao] = await Promise.all([
+      this.assinatura.getModulosAtivos(ator(u)),
+      this.assinatura.situacao(ator(u)),
+    ]);
+    return { catalogo: MODULES, ativos, situacao };
   }
 
   @ExigeAcesso(PAPEL_ADMIN, PAPEL_FINANCEIRO)
   @Get('assinatura')
-  getAssinatura(@CurrentUser() u: ITokenPayload) {
-    return this.assinatura.getCurrent(ator(u));
+  async getAssinatura(@CurrentUser() u: ITokenPayload) {
+    return {
+      ...(await this.assinatura.getCurrent(ator(u))),
+      pagamentoOnline: this.cobranca.pagamentoOnline,
+    };
+  }
+
+  /** Link de pagamento (AbacatePay: PIX ou cartão) de uma fatura pendente. */
+  @ExigeAcesso(PAPEL_ADMIN, PAPEL_FINANCEIRO)
+  @Post('assinatura/faturas/:id/pagamento')
+  @HttpCode(200)
+  pagamento(
+    @CurrentUser() u: ITokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const frontend = this.config.get<string>('FRONTEND_URL');
+    return this.cobranca.linkPagamento(
+      ator(u),
+      id,
+      frontend ? `${frontend.replace(/\/+$/, '')}/assinatura` : undefined,
+    );
   }
 
   /** Simula valor e pró-rata sem gravar (POST como no Clinic: corpo com lista). */

@@ -51,4 +51,11 @@ export class Fatura extends BaseEntity {
   /** Memória do cálculo (pró-rata ou renovação). */
   @Column({ type: 'jsonb', default: () => "'{}'" })
   itens!: Record<string, unknown>;
+
+  /** Checkout na AbacatePay (criado sob demanda). */
+  @Column({ name: 'cobranca_id', type: 'varchar', nullable: true })
+  cobrancaId?: string | null;
+
+  @Column({ name: 'cobranca_url', type: 'text', nullable: true })
+  cobrancaUrl?: string | null;
 }
