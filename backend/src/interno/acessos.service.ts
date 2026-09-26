@@ -2,8 +2,8 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
@@ -24,7 +24,18 @@ import {
   AtualizarAcessoDto,
   CriarAcessoDto,
   ReenviarConviteDto,
+  RemoverAcessoDto,
 } from './dtos/acessos.dtos';
+
+export interface AcessoCriado {
+  usuarioId: string;
+  /** A pessoa foi criada agora. */
+  novo: boolean;
+  /** A pessoa ainda não definiu a senha (vale "reenviar convite"). */
+  convitePendente: boolean;
+  /** O e-mail de convite saiu. `false` com `convitePendente` = reenviar. */
+  emailEnviado: boolean;
+}
 
 export interface AcessoInternoView {
   usuarioId: string;
@@ -63,6 +74,8 @@ const paraView = (a: Acesso): AcessoInternoView => ({
  */
 @Injectable()
 export class AcessosService {
+  private readonly logger = new Logger(AcessosService.name);
+
   constructor(
     @Inject('DATA_SOURCE') private readonly ds: DataSource,
     @Inject('USUARIO_REPOSITORY')
@@ -74,10 +87,7 @@ export class AcessosService {
     private readonly audit: AuditService,
   ) {}
 
-  async criar(
-    produto: Produto,
-    dto: CriarAcessoDto,
-  ): Promise<{ usuarioId: string; novo: boolean }> {
+  async criar(produto: Produto, dto: CriarAcessoDto): Promise<AcessoCriado> {
     const email = normalizarEmail(dto.email);
     const existente = await this.usuarios.findOne({ where: { email } });
     if (
@@ -120,17 +130,39 @@ export class AcessosService {
       },
     );
     await this.auditar(produto, dto.tenantId, 'convidar', usuario.id);
-    if (convite) {
-      // O acesso já existe: se o e-mail falhar, o caminho é reenviar o convite.
-      await this.mail
-        .sendConvite(email, usuario.nome, convite.token, produto)
-        .catch(() => {
-          throw new ServiceUnavailableException(
-            'Acesso registrado, mas o e-mail não foi enviado. Use “Reenviar convite”.',
-          );
-        });
-    }
-    return { usuarioId: usuario.id, novo: !existente };
+    // B2: o acesso já está gravado; se o e-mail falhar, o produto grava o
+    // vínculo mesmo assim e oferece "reenviar convite" (201, não 5xx).
+    const emailEnviado = convite
+      ? await this.mail
+          .sendConvite(email, usuario.nome, convite.token, produto)
+          .then(
+            () => true,
+            () => {
+              this.logger.warn('[acessos] convite gravado, e-mail não saiu.');
+              return false;
+            },
+          )
+      : false;
+    return {
+      usuarioId: usuario.id,
+      novo: !existente,
+      convitePendente: !temSenha,
+      emailEnviado,
+    };
+  }
+
+  /**
+   * Compensação do produto: o vínculo local não pôde ser gravado depois do
+   * `criar`. Remove o acesso (libera a vaga); a pessoa fica (inofensiva).
+   */
+  async remover(produto: Produto, dto: RemoverAcessoDto): Promise<void> {
+    const acesso = await this.exigir(produto, dto.tenantId, dto.usuarioId);
+    await this.acessos.delete({ id: acesso.id });
+    await this.sessoes.revogarDaPessoa(dto.usuarioId, {
+      produto,
+      tenantId: dto.tenantId,
+    });
+    await this.auditar(produto, dto.tenantId, 'remover', dto.usuarioId);
   }
 
   async atualizar(

@@ -51,7 +51,7 @@ describeDb('API interna de acessos (integração)', () => {
   beforeEach(() => jest.clearAllMocks());
 
   const interno = (
-    metodo: 'post' | 'patch' | 'get',
+    metodo: 'post' | 'patch' | 'get' | 'delete',
     rota: string,
     chave: string | null = CHAVE,
   ) => {
@@ -86,7 +86,12 @@ describeDb('API interna de acessos (integração)', () => {
         papel: 'recepcao',
       })
       .expect(201);
-    expect(res.body).toEqual({ usuarioId: expect.any(String), novo: true });
+    expect(res.body).toEqual({
+      usuarioId: expect.any(String),
+      novo: true,
+      convitePendente: true,
+      emailEnviado: true,
+    });
     expect(mail.sendConvite).toHaveBeenCalledWith(
       'nova@exemplo.com',
       'Nova',
@@ -125,7 +130,11 @@ describeDb('API interna de acessos (integração)', () => {
         papel: 'financeiro',
       })
       .expect(201);
-    expect(res.body.novo).toBe(false);
+    expect(res.body).toMatchObject({
+      novo: false,
+      convitePendente: false,
+      emailEnviado: false,
+    });
     expect(mail.sendConvite).not.toHaveBeenCalled();
     const l = await login('outro@exemplo.com', T1).expect(200);
     expect(l.body.acesso).toEqual({
@@ -255,22 +264,59 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(404);
   });
 
-  it('convite registrado mas e-mail falhou → 503; o acesso fica (reenviar resolve)', async () => {
+  it('convite registrado mas e-mail falhou → 201 { emailEnviado: false }; o acesso fica (reenviar resolve) — B2', async () => {
     mail.sendConvite.mockRejectedValueOnce(new Error('smtp'));
-    await interno('post', '/acessos')
+    const res = await interno('post', '/acessos')
       .send({
         tenantId: T_SEM,
         email: 'falhou@exemplo.com',
         nome: 'Falhou',
         papel: 'gestor',
       })
-      .expect(503);
+      .expect(201);
+    expect(res.body).toMatchObject({
+      novo: true,
+      convitePendente: true,
+      emailEnviado: false,
+    });
     const [{ n }] = await ds.query(
       `SELECT count(*)::int AS n FROM crommos.acessos a
          JOIN crommos.usuarios u ON u.id = a.usuario_id
         WHERE u.email = 'falhou@exemplo.com' AND a.convite_pendente`,
     );
     expect(n).toBe(1);
+  });
+
+  it('DELETE /acessos (compensação do produto): remove o acesso e libera a vaga; 404 sem acesso', async () => {
+    const res = await interno('post', '/acessos')
+      .send({
+        tenantId: T_SEM,
+        email: 'compensa@exemplo.com',
+        nome: 'Compensa',
+        papel: 'gestor',
+      })
+      .expect(201);
+    await interno('delete', '/acessos')
+      .send({ tenantId: T_SEM, usuarioId: res.body.usuarioId })
+      .expect(204);
+    expect(
+      await ds.getRepository(Acesso).countBy({
+        usuarioId: res.body.usuarioId,
+        tenantId: T_SEM,
+      }),
+    ).toBe(0);
+    await interno('delete', '/acessos')
+      .send({ tenantId: T_SEM, usuarioId: res.body.usuarioId })
+      .expect(404);
+    // Convidar de novo funciona (não ficou "já tem acesso").
+    await interno('post', '/acessos')
+      .send({
+        tenantId: T_SEM,
+        email: 'compensa@exemplo.com',
+        nome: 'Compensa',
+        papel: 'gestor',
+      })
+      .expect(201);
   });
 
   it('GET /pessoas/:id: dados e emailConfirmado; 404 fora do produto da chave', async () => {

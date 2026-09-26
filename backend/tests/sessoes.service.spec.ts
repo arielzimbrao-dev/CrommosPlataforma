@@ -123,7 +123,11 @@ describe('SessoesService', () => {
       refreshHash: sha256(refreshToken),
     };
     sessoes.findOne
-      .mockResolvedValueOnce({ ...base, revogadaEm: null, substituidaPor: null })
+      .mockResolvedValueOnce({
+        ...base,
+        revogadaEm: null,
+        substituidaPor: null,
+      })
       .mockResolvedValueOnce({
         ...base,
         revogadaEm: new Date(),

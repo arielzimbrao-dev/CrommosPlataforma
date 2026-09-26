@@ -53,3 +53,11 @@ export class ReenviarConviteDto {
   @IsUUID()
   usuarioId!: string;
 }
+
+export class RemoverAcessoDto {
+  @IsUUID()
+  tenantId!: string;
+
+  @IsUUID()
+  usuarioId!: string;
+}
