@@ -355,6 +355,8 @@ describeDb('Migrations da plataforma (plat_int)', () => {
         await c.end();
       }
     },
+    // Migrations reais do Clinic (~90 arquivos): folga para CI carregado.
+    300_000,
   );
 
   it('retrato do schema do Clinic (fixture): compatível e com backfill', async () => {
