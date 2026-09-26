@@ -7,6 +7,7 @@ import { DataSource } from 'typeorm';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { BillingModule } from './billing/billing.module';
+import { ContaModule } from './conta/conta.module';
 import { AllExceptionsFilter } from './common/exceptions/all-exceptions.filter';
 import { HealthController } from './common/health/health.controller';
 import { ThrottlerPostgres } from './common/http/throttler-postgres';
@@ -39,6 +40,7 @@ import { SignupModule } from './signup/signup.module';
     SignupModule,
     InternoModule,
     BillingModule,
+    ContaModule,
   ],
   controllers: [HealthController],
   providers: [
