@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import {
   criarEmailProvider,
   mascararEmail,
-  SendpulseEmailProvider,
+  ResendEmailProvider,
   StubEmailProvider,
 } from 'src/mail/email.provider';
 
@@ -23,97 +23,58 @@ describe('StubEmailProvider', () => {
   });
 });
 
-describe('SendpulseEmailProvider', () => {
-  const CFG = {
-    clientId: 'id',
-    clientSecret: 'segredo',
-    fromEmail: 'contato@crommos.com',
-    fromName: 'Crommos',
-  };
+describe('ResendEmailProvider', () => {
+  const CFG = { apiKey: 're_123', from: 'Crommos <contato@crommos.com>' };
 
-  function fakeFetch(respostas: Record<string, number> = {}) {
-    return jest.fn((url: string) => {
-      const path = new URL(url).pathname;
-      const status = respostas[path] ?? 200;
-      const corpo =
-        path === '/oauth/access_token'
-          ? { access_token: 'tok', expires_in: 3600 }
-          : { result: true };
-      return Promise.resolve({
-        ok: status < 400,
-        status,
-        json: () => Promise.resolve(corpo),
-      });
-    });
-  }
-  const corpo = (f: jest.Mock, i: number) =>
-    JSON.parse((f.mock.calls[i][1] as { body: string }).body) as Record<
-      string,
-      unknown
-    >;
-
-  it('autentica uma vez, reaproveita o token e envia texto + html escapado', async () => {
-    const f = fakeFetch();
-    const p = new SendpulseEmailProvider(CFG, f as never);
-    await p.enviarEmail('ana@x.com', 'Assunto', 'Olá <b>');
-    await p.enviarEmail('bia@x.com', 'Assunto', 'Oi');
-    expect(corpo(f, 0)).toEqual({
-      grant_type: 'client_credentials',
-      client_id: 'id',
-      client_secret: 'segredo',
-    });
-    expect(
-      f.mock.calls.filter((c) => String(c[0]).includes('oauth')),
-    ).toHaveLength(1);
-    const email = corpo(f, 1).email as Record<string, unknown>;
-    expect(email.to).toEqual([{ email: 'ana@x.com' }]);
-    expect(email.from).toEqual({
-      name: 'Crommos',
-      email: 'contato@crommos.com',
-    });
-    expect(email.text).toBe('Olá <b>');
-    expect(Buffer.from(email.html as string, 'base64').toString()).toContain(
-      'Olá &lt;b&gt;',
+  it('POST /emails com Bearer, remetente, destinatário, texto e HTML escapado', async () => {
+    const http = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+    await new ResendEmailProvider(CFG, http).enviarEmail(
+      'ana@clinica.com',
+      'Assunto',
+      'Olá <b>Ana</b> & cia',
     );
+    const [url, init] = http.mock.calls[0] as [
+      string,
+      { method: string; headers: Record<string, string>; body: string },
+    ];
+    expect(url).toBe('https://api.resend.com/emails');
+    expect(init.method).toBe('POST');
+    expect(init.headers.Authorization).toBe('Bearer re_123');
+    expect(JSON.parse(init.body)).toEqual({
+      from: 'Crommos <contato@crommos.com>',
+      to: ['ana@clinica.com'],
+      subject: 'Assunto',
+      text: 'Olá <b>Ana</b> & cia',
+      html: '<p>Olá &lt;b&gt;Ana&lt;/b&gt; &amp; cia</p>',
+    });
   });
 
-  it('renova o token vencido', async () => {
-    const f = fakeFetch();
-    let agora = 0;
-    const p = new SendpulseEmailProvider(CFG, f as never, () => agora);
-    await p.enviarEmail('a@x.com', 's', 't');
-    agora = 3_600_000;
-    await p.enviarEmail('a@x.com', 's', 't');
-    expect(
-      f.mock.calls.filter((c) => String(c[0]).includes('oauth')),
-    ).toHaveLength(2);
+  it('parágrafos viram <p> e links continuam texto', async () => {
+    const http = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+    await new ResendEmailProvider(CFG, http).enviarEmail(
+      'a@b.c',
+      's',
+      'um\n\ndois',
+    );
+    const corpo = JSON.parse(
+      (http.mock.calls[0] as [string, { body: string }])[1].body,
+    ) as { html: string };
+    expect(corpo.html).toBe('<p>um</p><p>dois</p>');
   });
 
-  it('erro HTTP e falha de autenticação lançam só o status', async () => {
+  it('erro HTTP: lança só com o status (sem ecoar o corpo)', async () => {
+    const http = jest.fn().mockResolvedValue({ ok: false, status: 422 });
     await expect(
-      new SendpulseEmailProvider(
-        CFG,
-        fakeFetch({ '/smtp/emails': 400 }) as never,
-      ).enviarEmail('a@x.com', 's', 't'),
-    ).rejects.toThrow(/^SendPulse email: HTTP 400$/);
-    await expect(
-      new SendpulseEmailProvider(
-        CFG,
-        fakeFetch({ '/oauth/access_token': 401 }) as never,
-      ).enviarEmail('a@x.com', 's', 't'),
-    ).rejects.toThrow('SendPulse auth: HTTP 401');
+      new ResendEmailProvider(CFG, http).enviarEmail('a@b.c', 's', 'c'),
+    ).rejects.toThrow('Resend: HTTP 422');
   });
 });
 
 describe('criarEmailProvider', () => {
-  it('sem credenciais → stub; com id + secret → SendPulse', () => {
+  it('sem RESEND_API_KEY → stub; com ela → Resend (remetente padrão)', () => {
     expect(criarEmailProvider({})).toBeInstanceOf(StubEmailProvider);
-    expect(
-      criarEmailProvider({
-        SENDPULSE_CLIENT_ID: 'a',
-        SENDPULSE_CLIENT_SECRET: 'b',
-      }),
-    ).toBeInstanceOf(SendpulseEmailProvider);
-    expect(criarEmailProvider()).toBeInstanceOf(StubEmailProvider);
+    expect(criarEmailProvider({ RESEND_API_KEY: 're_x' })).toBeInstanceOf(
+      ResendEmailProvider,
+    );
   });
 });
