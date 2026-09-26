@@ -130,7 +130,7 @@ export class ContaService {
     await this.ds.transaction(async (em) => {
       // Trava os acessos da pessoa: nada de outro admin sair ao mesmo tempo
       // sem a conferência abaixo enxergar.
-      const unicos = (await em.query(
+      const unicos = await em.query<{ clinica: string | null }[]>(
         `SELECT s.tenant_nome AS clinica
            FROM crommos.acessos a
            JOIN crommos.assinaturas s
@@ -144,7 +144,7 @@ export class ContaService {
                  AND o.papel = $2 AND NOT o.convite_pendente)
           FOR UPDATE OF a`,
         [usuarioId, PAPEL_ADMIN],
-      )) as { clinica: string | null }[];
+      );
       if (unicos.length) {
         throw new ConflictException(
           `Você é o único administrador de: ${unicos

@@ -178,7 +178,7 @@ export class SignupService {
       let cliente = await em.findOne(Cliente, { where: { documento } });
       const clienteNovo = !cliente;
       if (cliente) {
-        const [dono] = (await em.query(
+        const [dono] = await em.query<unknown[]>(
           `SELECT 1 FROM crommos.assinaturas a
              JOIN crommos.acessos x
                ON x.tenant_id = a.tenant_id AND x.produto = a.produto
@@ -186,7 +186,7 @@ export class SignupService {
               AND x.usuario_id = $2 AND x.papel = $3 AND x.ativo
             LIMIT 1`,
           [cliente.id, usuarioId, PAPEL_ADMIN],
-        )) as unknown[];
+        );
         if (!dono) {
           throw new ConflictException(
             'Este CPF/CNPJ já está cadastrado em outra conta.',
