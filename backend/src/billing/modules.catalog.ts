@@ -12,6 +12,7 @@ export enum ModuleCode {
   Exames = 'exames',
   MultiplasUnidades = 'multiplas_unidades',
   Convenio = 'convenio',
+  Estoque = 'estoque',
 }
 
 export enum PlanoPeriodo {
@@ -44,6 +45,14 @@ export const MODULES: ModuleInfo[] = [
   {
     code: ModuleCode.Convenio,
     nome: 'Convênio',
+    precoPorUsuario: 0,
+    precoADefinir: true,
+  },
+  // Estoque (Clinic) ainda sem preço na precificação → "a definir", como o
+  // Convênio (docs/03-precificacao.md do workspace).
+  {
+    code: ModuleCode.Estoque,
+    nome: 'Estoque',
     precoPorUsuario: 0,
     precoADefinir: true,
   },
