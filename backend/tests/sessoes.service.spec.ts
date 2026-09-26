@@ -79,6 +79,63 @@ describe('SessoesService', () => {
     expect(audit.registrar).not.toHaveBeenCalled();
   });
 
+  it('consumir: refresh recém-rotacionado (outra aba, < 10 s) → par novo, sem revogar tudo (B1)', async () => {
+    const { svc, sessoes, audit } = make();
+    const { refreshToken } = await svc.emitir(alvo, 'jti-g');
+    sessoes.findOne.mockResolvedValue({
+      jti: 'jti-g',
+      usuarioId: 'u1',
+      refreshHash: sha256(refreshToken),
+      revogadaEm: new Date(Date.now() - 2_000),
+      substituidaPor: 'jti-outra-aba',
+    });
+    const r = await svc.consumir(refreshToken);
+    expect(r.claims.sub).toBe('u1');
+    expect(r.jtiNovo).toEqual(expect.any(String));
+    expect(sessoes.update).not.toHaveBeenCalled();
+    expect(audit.registrar).not.toHaveBeenCalled();
+  });
+
+  it('consumir: rotacionado há mais de 10 s → reuso (revoga todas)', async () => {
+    const { svc, sessoes, audit } = make();
+    const { refreshToken } = await svc.emitir(alvo, 'jti-v');
+    sessoes.findOne.mockResolvedValue({
+      jti: 'jti-v',
+      usuarioId: 'u1',
+      refreshHash: sha256(refreshToken),
+      revogadaEm: new Date(Date.now() - 11_000),
+      substituidaPor: 'jti-x',
+    });
+    await expect(svc.consumir(refreshToken)).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(audit.registrar).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'refresh-reutilizado' }),
+    );
+  });
+
+  it('consumir: corrida em que a outra aba acabou de rotacionar → par novo (B1)', async () => {
+    const { svc, sessoes, audit } = make();
+    const { refreshToken } = await svc.emitir(alvo, 'jti-c');
+    const base = {
+      jti: 'jti-c',
+      usuarioId: 'u1',
+      refreshHash: sha256(refreshToken),
+    };
+    sessoes.findOne
+      .mockResolvedValueOnce({ ...base, revogadaEm: null, substituidaPor: null })
+      .mockResolvedValueOnce({
+        ...base,
+        revogadaEm: new Date(),
+        substituidaPor: 'jti-aba-1',
+      });
+    sessoes.update.mockResolvedValueOnce({ affected: 0 });
+    await expect(svc.consumir(refreshToken)).resolves.toMatchObject({
+      claims: { sub: 'u1' },
+    });
+    expect(audit.registrar).not.toHaveBeenCalled();
+  });
+
   it('consumir: corrida (UPDATE não casou) conta como reuso', async () => {
     const { svc, sessoes, audit } = make();
     const { refreshToken } = await svc.emitir(alvo, 'jti-3');
