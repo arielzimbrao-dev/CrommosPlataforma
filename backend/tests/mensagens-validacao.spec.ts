@@ -70,6 +70,16 @@ describe('traduzirValidacao (QA-007: 400 do ValidationPipe em pt-BR)', () => {
     ['endereco must be an object', 'endereco deve ser um objeto.'],
     ['site must be a URL address', 'site deve ser uma URL válida.'],
     ['Validation failed (uuid is expected)', 'Identificador inválido.'],
+    ['ativo must be a boolean string', 'ativo deve ser verdadeiro ou falso.'],
+    [
+      'nested property endereco must be either object or array',
+      'endereco deve ser um objeto ou uma lista.',
+    ],
+    // Mensagem própria com `each: true`: só o prefixo muda.
+    [
+      'each value in datas deve ser uma data no formato AAAA-MM-DD',
+      'cada item de datas deve ser uma data no formato AAAA-MM-DD',
+    ],
   ])('%s', (en, pt) => {
     expect(traduzirMensagem(en)).toBe(pt);
   });

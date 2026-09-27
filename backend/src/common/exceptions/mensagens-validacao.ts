@@ -54,19 +54,20 @@ const REGRAS: [RegExp, string][] = [
   [/^(.+) must be an object$/, '$1 deve ser um objeto.'],
   [/^(.+) must be a URL address$/, '$1 deve ser uma URL válida.'],
   [/^Validation failed \(uuid is expected\)$/, 'Identificador inválido.'],
+  [/^(.+) must be a boolean string$/, '$1 deve ser verdadeiro ou falso.'],
+  [
+    /^nested property (.+) must be either object or array$/,
+    '$1 deve ser um objeto ou uma lista.',
+  ],
 ];
 
 export function traduzirMensagem(msg: string): string {
   // `each: true` prefixa "each value in <campo>".
   const cada = /^each value in /.exec(msg);
   const base = cada ? msg.slice(cada[0].length) : msg;
-  for (const [re, pt] of REGRAS) {
-    if (re.test(base)) {
-      const r = base.replace(re, pt);
-      return cada ? `cada item de ${r}` : r;
-    }
-  }
-  return msg;
+  const regra = REGRAS.find(([re]) => re.test(base));
+  const r = regra ? base.replace(regra[0], regra[1]) : base;
+  return cada ? `cada item de ${r}` : r;
 }
 
 /** Traduz a `message` de um 400 (string ou lista); outros formatos passam. */
