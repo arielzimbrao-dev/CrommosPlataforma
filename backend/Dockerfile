@@ -10,7 +10,9 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
-RUN npm ci
+# --include=dev: o Coolify pode injetar NODE_ENV=production como build arg, o que
+# faria o npm ci pular as devDependencies (nest, tsc, vite) e quebrar o build.
+RUN npm ci --include=dev
 
 #############################################
 # build: compila o NestJS e poda para deps de produção
