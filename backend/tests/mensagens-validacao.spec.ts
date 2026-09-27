@@ -7,7 +7,10 @@ describe('traduzirValidacao (QA-007: 400 do ValidationPipe em pt-BR)', () => {
   it.each([
     ['email must be an email', 'email deve ser um e-mail válido.'],
     ['nome must be a string', 'nome deve ser um texto.'],
-    ['numeroUsuarios must be an integer number', 'numeroUsuarios deve ser um número inteiro.'],
+    [
+      'numeroUsuarios must be an integer number',
+      'numeroUsuarios deve ser um número inteiro.',
+    ],
     [
       'valor must be a number conforming to the specified constraints',
       'valor deve ser um número.',
@@ -22,7 +25,10 @@ describe('traduzirValidacao (QA-007: 400 do ValidationPipe em pt-BR)', () => {
       'each value in modulos must be one of the following values: agenda, financeiro',
       'cada item de modulos deve ser um destes valores: agenda, financeiro.',
     ],
-    ['numeroUsuarios must not be less than 1', 'numeroUsuarios não pode ser menor que 1.'],
+    [
+      'numeroUsuarios must not be less than 1',
+      'numeroUsuarios não pode ser menor que 1.',
+    ],
     [
       'numeroUsuarios must not be greater than 1000',
       'numeroUsuarios não pode ser maior que 1000.',
@@ -36,7 +42,10 @@ describe('traduzirValidacao (QA-007: 400 do ValidationPipe em pt-BR)', () => {
       'nome deve ter no máximo 255 caracteres.',
     ],
     ['modulos must be an array', 'modulos deve ser uma lista.'],
-    ["All modulos's elements must be unique", 'modulos não pode ter itens repetidos.'],
+    [
+      "All modulos's elements must be unique",
+      'modulos não pode ter itens repetidos.',
+    ],
     ['nome should not be empty', 'nome é obrigatório.'],
     ['nome should not be null or undefined', 'nome é obrigatório.'],
     ['property foo should not exist', 'O campo foo não é permitido.'],
@@ -44,17 +53,23 @@ describe('traduzirValidacao (QA-007: 400 do ValidationPipe em pt-BR)', () => {
       'data must be a valid ISO 8601 date string',
       'data deve ser uma data válida.',
     ],
-    ['cep must match /^\\d{8}$/ regular expression', 'cep está em formato inválido.'],
-    ['itens must contain at least 1 elements', 'itens deve ter pelo menos 1 item(ns).'],
-    ['itens must contain no more than 50 elements', 'itens deve ter no máximo 50 item(ns).'],
+    [
+      'cep must match /^\\d{8}$/ regular expression',
+      'cep está em formato inválido.',
+    ],
+    [
+      'itens must contain at least 1 elements',
+      'itens deve ter pelo menos 1 item(ns).',
+    ],
+    [
+      'itens must contain no more than 50 elements',
+      'itens deve ter no máximo 50 item(ns).',
+    ],
     ['aceite must be equal to true', 'aceite deve ser igual a true.'],
     ['valor must be a positive number', 'valor deve ser positivo.'],
     ['endereco must be an object', 'endereco deve ser um objeto.'],
     ['site must be a URL address', 'site deve ser uma URL válida.'],
-    [
-      'Validation failed (uuid is expected)',
-      'Identificador inválido.',
-    ],
+    ['Validation failed (uuid is expected)', 'Identificador inválido.'],
   ])('%s', (en, pt) => {
     expect(traduzirMensagem(en)).toBe(pt);
   });

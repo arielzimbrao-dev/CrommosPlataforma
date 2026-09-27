@@ -274,7 +274,12 @@ describeDb('API interna de acessos (integração)', () => {
         .get(`/auth/aceitar-convite?token=${token}`)
         .expect(302);
     const res = await interno('post', '/acessos')
-      .send({ tenantId: T_SEM, email: 'aceite@exemplo.com', nome: 'Aceite', papel: 'gestor' })
+      .send({
+        tenantId: T_SEM,
+        email: 'aceite@exemplo.com',
+        nome: 'Aceite',
+        papel: 'gestor',
+      })
       .expect(201);
     const primeiro = ultimo(mail.sendConviteAceite, 2);
     await interno('post', '/acessos/reenviar-convite')
@@ -283,7 +288,9 @@ describeDb('API interna de acessos (integração)', () => {
     const segundo = ultimo(mail.sendConviteAceite, 2);
     expect(segundo).not.toBe(primeiro);
     expect(mail.sendConvite).not.toHaveBeenCalled();
-    expect((await aceitar(primeiro)).headers.location).toMatch(/conviteAceito=0$/);
+    expect((await aceitar(primeiro)).headers.location).toMatch(
+      /conviteAceito=0$/,
+    );
 
     // Redefinir a senha não aceita o convite de quem já tinha senha.
     await request(app.getHttpServer())
@@ -292,7 +299,10 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(202);
     await request(app.getHttpServer())
       .post('/auth/reset-password')
-      .send({ token: ultimo(mail.sendPasswordReset, 1), password: 'nova-senha-9' })
+      .send({
+        token: ultimo(mail.sendPasswordReset, 1),
+        password: 'nova-senha-9',
+      })
       .expect(204);
     await login('aceite@exemplo.com', T_SEM, 'nova-senha-9').expect(401);
 
@@ -300,7 +310,9 @@ describeDb('API interna de acessos (integração)', () => {
     await interno('patch', '/acessos')
       .send({ tenantId: T_SEM, usuarioId: p.id, ativo: false })
       .expect(200);
-    expect((await aceitar(segundo)).headers.location).toMatch(/conviteAceito=0$/);
+    expect((await aceitar(segundo)).headers.location).toMatch(
+      /conviteAceito=0$/,
+    );
     await interno('patch', '/acessos')
       .send({ tenantId: T_SEM, usuarioId: p.id, ativo: true })
       .expect(200);
@@ -310,7 +322,9 @@ describeDb('API interna de acessos (integração)', () => {
         WHERE usuario_id = $1 AND tenant_id = $2`,
       [p.id, T_SEM],
     );
-    expect((await aceitar(segundo)).headers.location).toMatch(/conviteAceito=0$/);
+    expect((await aceitar(segundo)).headers.location).toMatch(
+      /conviteAceito=0$/,
+    );
     await interno('post', '/acessos/reenviar-convite')
       .send({ tenantId: T_SEM, usuarioId: p.id })
       .expect(204);
@@ -336,7 +350,12 @@ describeDb('API interna de acessos (integração)', () => {
     const p = await criarPessoa(ds, { email: 'leitura@exemplo.com' });
     await criarAcesso(ds, { usuarioId: p.id, tenantId: T_LEITURA });
     const convidado = await interno('post', '/acessos')
-      .send({ tenantId: T_LEITURA, email: 'pendente-leitura@exemplo.com', nome: 'Pendente', papel: 'recepcao' })
+      .send({
+        tenantId: T_LEITURA,
+        email: 'pendente-leitura@exemplo.com',
+        nome: 'Pendente',
+        papel: 'recepcao',
+      })
       .expect(201);
     await interno('post', '/acessos/reenviar-convite')
       .send({ tenantId: T_LEITURA, usuarioId: convidado.body.usuarioId })

@@ -468,7 +468,11 @@ describeDb('Auth (integração)', () => {
         .post('/auth/logout')
         .set('Cookie', cookieRefresh(b.headers))
         .expect(204);
-      for (const t of [l.body.accessToken, a.body.accessToken, b.body.accessToken]) {
+      for (const t of [
+        l.body.accessToken,
+        a.body.accessToken,
+        b.body.accessToken,
+      ]) {
         const r = await modulos(t as string).expect(401);
         expect(r.body.message).toBe('Sessão encerrada.');
       }
@@ -506,10 +510,12 @@ describeDb('Auth (integração)', () => {
     });
 
     it('transição: access antigo, sem sid, vale até expirar', async () => {
-      const semSid = await app.get(JwtService).signAsync(
-        { sub: ana.id, produto: 'clinic', tenantId: T1, typ: 'access' },
-        { expiresIn: '15m' },
-      );
+      const semSid = await app
+        .get(JwtService)
+        .signAsync(
+          { sub: ana.id, produto: 'clinic', tenantId: T1, typ: 'access' },
+          { expiresIn: '15m' },
+        );
       await modulos(semSid).expect(200);
     });
   });
@@ -527,7 +533,10 @@ describeDb('Auth (integração)', () => {
       const p = await criarPessoa(ds, { email: 'forca@exemplo.com' });
       await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
       for (let i = 0; i < 5; i++) {
-        await login({ email: 'forca@exemplo.com', password: 'errada-123' }).expect(401);
+        await login({
+          email: 'forca@exemplo.com',
+          password: 'errada-123',
+        }).expect(401);
       }
       const bloqueado = await login({ email: 'FORCA@exemplo.com' }).expect(429);
       expect(bloqueado.body.message).toMatch(/Muitas tentativas/);
@@ -538,11 +547,17 @@ describeDb('Auth (integração)', () => {
       const p = await criarPessoa(ds, { email: 'zera@exemplo.com' });
       await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
       for (let i = 0; i < 4; i++) {
-        await login({ email: 'zera@exemplo.com', password: 'errada-123' }).expect(401);
+        await login({
+          email: 'zera@exemplo.com',
+          password: 'errada-123',
+        }).expect(401);
       }
       await login({ email: 'zera@exemplo.com' }).expect(200);
       for (let i = 0; i < 4; i++) {
-        await login({ email: 'zera@exemplo.com', password: 'errada-123' }).expect(401);
+        await login({
+          email: 'zera@exemplo.com',
+          password: 'errada-123',
+        }).expect(401);
       }
       await login({ email: 'zera@exemplo.com' }).expect(200);
     });
@@ -562,7 +577,10 @@ describeDb('Auth (integração)', () => {
 
     it('reenviar-confirmacao: 3 por hora por pessoa → 429', async () => {
       const { campos } = gerarConfirmacaoEmail();
-      const p = await criarPessoa(ds, { email: 'reenvia3@exemplo.com', ...campos });
+      const p = await criarPessoa(ds, {
+        email: 'reenvia3@exemplo.com',
+        ...campos,
+      });
       await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
       const l = await login({ email: 'reenvia3@exemplo.com' }).expect(200);
       const auth = `Bearer ${l.body.accessToken}`;

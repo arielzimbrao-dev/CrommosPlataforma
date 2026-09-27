@@ -1,9 +1,4 @@
-import {
-  HttpException,
-  HttpStatus,
-  Inject,
-  Injectable,
-} from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { sha256 } from '../common/crypto/segredo';
 import { ThrottlerPostgres } from '../common/http/throttler-postgres';
@@ -53,7 +48,12 @@ export class TentativasService {
         WHERE janela_fim > now()
           AND ((chave = $1 AND hits >= $2) OR (chave = $3 AND hits >= $4))
         LIMIT 1`,
-      [`${LOGIN_EMAIL}:${k.par}`, FALHAS_POR_EMAIL, `${LOGIN_IP}:${k.ip}`, FALHAS_POR_IP],
+      [
+        `${LOGIN_EMAIL}:${k.par}`,
+        FALHAS_POR_EMAIL,
+        `${LOGIN_IP}:${k.ip}`,
+        FALHAS_POR_IP,
+      ],
     );
     if (linha) {
       throw new HttpException(
@@ -65,8 +65,20 @@ export class TentativasService {
 
   async registrarFalhaLogin(ip: string, email: string): Promise<void> {
     const k = this.chaves(ip, email);
-    await this.contador.increment(k.par, JANELA_LOGIN, FALHAS_POR_EMAIL, JANELA_LOGIN, LOGIN_EMAIL);
-    await this.contador.increment(k.ip, JANELA_LOGIN, FALHAS_POR_IP, JANELA_LOGIN, LOGIN_IP);
+    await this.contador.increment(
+      k.par,
+      JANELA_LOGIN,
+      FALHAS_POR_EMAIL,
+      JANELA_LOGIN,
+      LOGIN_EMAIL,
+    );
+    await this.contador.increment(
+      k.ip,
+      JANELA_LOGIN,
+      FALHAS_POR_IP,
+      JANELA_LOGIN,
+      LOGIN_IP,
+    );
   }
 
   /** Senha certa: zera as falhas do par (as do IP seguem valendo). */
@@ -83,7 +95,13 @@ export class TentativasService {
     limite: number,
     janelaMs: number,
   ): Promise<boolean> {
-    const r = await this.contador.increment(sha256(alvo), janelaMs, limite, janelaMs, nome);
+    const r = await this.contador.increment(
+      sha256(alvo),
+      janelaMs,
+      limite,
+      janelaMs,
+      nome,
+    );
     return r.totalHits <= limite;
   }
 }

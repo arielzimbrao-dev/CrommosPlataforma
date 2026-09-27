@@ -49,14 +49,15 @@ describe('JwtStrategy', () => {
   });
 
   it('QA-002: com sid, confere a sessão; família encerrada → 401', async () => {
-    await expect(
-      strategy.validate({ ...base, sid: 's1' } as never),
-    ).resolves.toEqual({ ...base, sid: 's1' });
+    await expect(strategy.validate({ ...base, sid: 's1' })).resolves.toEqual({
+      ...base,
+      sid: 's1',
+    });
     expect(sessoes.sessaoVigente).toHaveBeenCalledWith('s1', 'u1');
     sessoes.sessaoVigente.mockResolvedValueOnce(false);
-    await expect(
-      strategy.validate({ ...base, sid: 's1' } as never),
-    ).rejects.toThrow('Sessão encerrada.');
+    await expect(strategy.validate({ ...base, sid: 's1' })).rejects.toThrow(
+      'Sessão encerrada.',
+    );
   });
 
   it.each([

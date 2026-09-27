@@ -42,7 +42,13 @@ describe('MailService', () => {
 
   it('QA-004: convite de quem já tem conta aponta para o aceite na API, com o nome da clínica', async () => {
     process.env.API_URL = 'https://conta.crommos.com';
-    await make().sendConviteAceite('bia@x.com', 'Bia', 'tok-7', 'clinic', 'Clínica Sol');
+    await make().sendConviteAceite(
+      'bia@x.com',
+      'Bia',
+      'tok-7',
+      'clinic',
+      'Clínica Sol',
+    );
     await make().sendConviteAceite('bia@x.com', 'Bia', 'tok-8', 'clinic', null);
     delete process.env.API_URL;
     expect(enviarEmail.mock.calls[0][1]).toBe('Convite para o Crommos Clinic');
