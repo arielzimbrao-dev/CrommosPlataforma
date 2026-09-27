@@ -26,9 +26,13 @@ const contexto = (req: Record<string, unknown>) =>
   }) as unknown as ExecutionContext;
 
 describe('JwtStrategy', () => {
-  const strategy = new JwtStrategy({
-    getOrThrow: () => process.env.PLATAFORMA_JWT_PUBLIC_KEY,
-  } as unknown as ConfigService);
+  const sessoes = { sessaoVigente: jest.fn().mockResolvedValue(true) };
+  const strategy = new JwtStrategy(
+    {
+      getOrThrow: () => process.env.PLATAFORMA_JWT_PUBLIC_KEY,
+    } as unknown as ConfigService,
+    sessoes as never,
+  );
   const base = {
     sub: 'u1',
     produto: 'clinic' as const,
@@ -36,8 +40,23 @@ describe('JwtStrategy', () => {
     typ: 'access' as const,
   };
 
-  it('devolve só as claims do contrato de um access', () => {
-    expect(strategy.validate({ ...base, extra: 1 } as never)).toEqual(base);
+  it('devolve só as claims do contrato de um access', async () => {
+    await expect(
+      strategy.validate({ ...base, extra: 1 } as never),
+    ).resolves.toEqual(base);
+    // Sem sid (token anterior ao QA-002): não consulta a sessão.
+    expect(sessoes.sessaoVigente).not.toHaveBeenCalled();
+  });
+
+  it('QA-002: com sid, confere a sessão; família encerrada → 401', async () => {
+    await expect(
+      strategy.validate({ ...base, sid: 's1' } as never),
+    ).resolves.toEqual({ ...base, sid: 's1' });
+    expect(sessoes.sessaoVigente).toHaveBeenCalledWith('s1', 'u1');
+    sessoes.sessaoVigente.mockResolvedValueOnce(false);
+    await expect(
+      strategy.validate({ ...base, sid: 's1' } as never),
+    ).rejects.toThrow('Sessão encerrada.');
   });
 
   it.each([
@@ -45,10 +64,10 @@ describe('JwtStrategy', () => {
     ['sem tenantId', { tenantId: '' }],
     ['sem sub', { sub: '' }],
     ['produto desconhecido', { produto: 'x' }],
-  ])('recusa %s', (_c, over) => {
-    expect(() => strategy.validate({ ...base, ...over } as never)).toThrow(
-      UnauthorizedException,
-    );
+  ])('recusa %s', async (_c, over) => {
+    await expect(
+      strategy.validate({ ...base, ...over } as never),
+    ).rejects.toThrow(UnauthorizedException);
   });
 });
 

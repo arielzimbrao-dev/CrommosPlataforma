@@ -185,7 +185,7 @@ export class AuthService {
   private async abrirSessao(
     usuario: Pick<Usuario, 'id' | 'nome' | 'email'>,
     acesso: AcessoView,
-    jti?: string,
+    rotacao?: { jti: string; familia: string },
   ): Promise<SessaoEmitida> {
     const tokens = await this.sessoes.emitir(
       {
@@ -193,7 +193,8 @@ export class AuthService {
         produto: acesso.produto,
         tenantId: acesso.tenantId,
       },
-      jti,
+      rotacao?.jti,
+      rotacao?.familia,
     );
     return {
       ...tokens,
@@ -211,9 +212,10 @@ export class AuthService {
    * ativo (desativado depois do login) → 401.
    */
   async refresh(refreshToken: string): Promise<SessaoEmitida> {
-    const { claims, jtiNovo } = await this.sessoes.consumir(refreshToken);
+    const { claims, jtiNovo, familia } =
+      await this.sessoes.consumir(refreshToken);
     const { usuario, acesso } = await this.exigirAcessoAtivo(claims);
-    return this.abrirSessao(usuario, acesso, jtiNovo);
+    return this.abrirSessao(usuario, acesso, { jti: jtiNovo, familia });
   }
 
   /** Logout pelo cookie: nunca falha; audita quando havia sessão vigente. */

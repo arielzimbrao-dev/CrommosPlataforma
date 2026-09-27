@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
-import { IsNull, LessThan, Repository } from 'typeorm';
+import { IsNull, LessThan, MoreThan, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { sha256 } from '../common/crypto/segredo';
 import { ITokenPayload } from '../common/interfaces/token-payload.interface';
@@ -64,10 +64,15 @@ export class SessoesService {
     private readonly audit: AuditService,
   ) {}
 
-  /** Emite access + refresh e grava a sessão (hash do refresh). */
+  /**
+   * Emite access + refresh e grava a sessão (hash do refresh). `familia` =
+   * a do login (rotação) ou, num login novo, o próprio jti; vai no access como
+   * `sid` (QA-002).
+   */
   async emitir(
     alvo: AlvoSessao,
     jti: string = randomUUID(),
+    familia: string = jti,
   ): Promise<ParDeTokens> {
     const base = {
       sub: alvo.usuarioId,
@@ -75,7 +80,7 @@ export class SessoesService {
       tenantId: alvo.tenantId,
     };
     const accessToken = await this.jwt.signAsync(
-      { ...base, typ: 'access' },
+      { ...base, typ: 'access', sid: familia },
       {
         expiresIn: expiresIn(this.config.get<string>('JWT_EXPIRES_IN', '15m')),
       },
@@ -94,8 +99,24 @@ export class SessoesService {
       expiraEm: new Date(Date.now() + durationToMs(ttl, REFRESH_PADRAO_MS)),
       revogadaEm: null,
       substituidaPor: null,
+      familia,
     });
     return { accessToken, refreshToken };
+  }
+
+  /**
+   * QA-002: o access com `sid` só vale enquanto a família tiver uma sessão
+   * vigente da pessoa (índice `idx_sessoes_familia`, uma consulta).
+   */
+  sessaoVigente(sid: string, usuarioId: string): Promise<boolean> {
+    return this.sessoes.exists({
+      where: {
+        familia: sid,
+        usuarioId,
+        revogadaEm: IsNull(),
+        expiraEm: MoreThan(new Date()),
+      },
+    });
   }
 
   /** Claims de um refresh válido (assinatura, validade, `typ` e `jti`), ou `null`. */
@@ -118,7 +139,7 @@ export class SessoesService {
    */
   async consumir(
     token: string,
-  ): Promise<{ claims: ITokenPayload; jtiNovo: string }> {
+  ): Promise<{ claims: ITokenPayload; jtiNovo: string; familia: string }> {
     const invalido = new UnauthorizedException(
       'Refresh token inválido ou expirado.',
     );
@@ -134,7 +155,8 @@ export class SessoesService {
     }
     if (sessao.revogadaEm && !sessao.substituidaPor) throw invalido;
     const jtiNovo = randomUUID();
-    if (rotacionadaAgora(sessao)) return { claims: p, jtiNovo };
+    const familia = sessao.familia ?? sessao.jti;
+    if (rotacionadaAgora(sessao)) return { claims: p, jtiNovo, familia };
     const r = sessao.revogadaEm
       ? { affected: 0 }
       : await this.sessoes.update(
@@ -149,7 +171,7 @@ export class SessoesService {
         await this.sessoes.findOne({ where: { jti: sessao.jti } }),
       )
     ) {
-      return { claims: p, jtiNovo };
+      return { claims: p, jtiNovo, familia };
     }
     if (!r.affected) {
       await this.revogarDaPessoa(p.sub);
@@ -166,22 +188,32 @@ export class SessoesService {
       });
       throw invalido;
     }
-    return { claims: p, jtiNovo };
+    return { claims: p, jtiNovo, familia };
   }
 
   /**
-   * Logout: revoga a sessão do refresh apresentado. Nunca falha (token
-   * inválido ou já revogado = nada a fazer). Devolve as claims se revogou.
+   * Logout: revoga a sessão do refresh apresentado **e a família dela** (as
+   * abas que renovaram juntas — B1), derrubando o access na hora (QA-002).
+   * Nunca falha (token inválido ou já revogado = nada a fazer). Devolve as
+   * claims se revogou.
    */
   async encerrar(token: string | undefined): Promise<ITokenPayload | null> {
     if (!token) return null;
     const p = await this.lerRefresh(token);
     if (!p) return null;
-    const r = await this.sessoes.update(
-      { jti: p.jti, refreshHash: sha256(token), revogadaEm: IsNull() },
+    const s = await this.sessoes.findOne({
+      where: { jti: p.jti, refreshHash: sha256(token), revogadaEm: IsNull() },
+    });
+    if (!s) return null;
+    await this.sessoes.update(
+      { familia: s.familia ?? s.jti, revogadaEm: IsNull() },
       { revogadaEm: new Date() },
     );
-    return r.affected ? p : null;
+    await this.sessoes.update(
+      { jti: s.jti, revogadaEm: IsNull() },
+      { revogadaEm: new Date() },
+    );
+    return p;
   }
 
   /**
