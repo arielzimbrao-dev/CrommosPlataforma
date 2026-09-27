@@ -157,6 +157,21 @@ export class AuthController {
     return { url: `${urlDoFrontend()}/login?emailConfirmado=${ok ? 1 : 0}` };
   }
 
+  /**
+   * QA-004: link do e-mail de convite de quem já tem conta — aceita e
+   * redireciona ao login do web (`conviteAceito=1|0`).
+   */
+  @Throttle({ default: { ttl: HORA, limit: 20 } })
+  @IsPublic()
+  @Get('aceitar-convite')
+  @Redirect()
+  async aceitarConvite(
+    @Query('token') token?: string,
+  ): Promise<{ url: string }> {
+    const ok = token ? await this.auth.aceitarConvite(token) : false;
+    return { url: `${urlDoFrontend()}/login?conviteAceito=${ok ? 1 : 0}` };
+  }
+
   @Throttle({ default: { ttl: HORA, limit: 20 } })
   @ApiBearerAuth()
   @Post('reenviar-confirmacao')

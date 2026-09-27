@@ -62,6 +62,27 @@ export class MailService {
   }
 
   /**
+   * QA-004: convite para quem **já tem conta**. O link aponta para a API
+   * (`GET /auth/aceitar-convite`), que aceita e redireciona ao login.
+   */
+  sendConviteAceite(
+    email: string,
+    nome: string,
+    token: string,
+    produto: Produto,
+    clinica: string | null,
+  ): Promise<void> {
+    const sistema = NOME_PRODUTO[produto];
+    const link = `${urlDaApi()}/auth/aceitar-convite?token=${token}`;
+    return this.enviar(email, `Convite para o ${sistema}`, link, [
+      `Olá, ${nome}!`,
+      `Você foi convidado(a) para acessar ${clinica ?? 'uma clínica'} no ${sistema}.`,
+      `Para aceitar, acesse (válido por 7 dias): ${link}`,
+      'Depois, entre com a senha que você já usa. Se não reconhece o convite, ignore este e-mail.',
+    ]);
+  }
+
+  /**
    * Confirmação do e-mail do signup. O link aponta para a **API**
    * (`GET /auth/confirmar-email`), que confirma e redireciona ao login.
    */

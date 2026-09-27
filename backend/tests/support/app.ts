@@ -10,6 +10,7 @@ export function mailFalso() {
   return {
     sendPasswordReset: jest.fn().mockResolvedValue(undefined),
     sendConvite: jest.fn().mockResolvedValue(undefined),
+    sendConviteAceite: jest.fn().mockResolvedValue(undefined),
     sendConfirmacaoEmail: jest.fn().mockResolvedValue(undefined),
   };
 }

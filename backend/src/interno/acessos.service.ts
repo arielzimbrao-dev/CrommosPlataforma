@@ -53,6 +53,21 @@ export interface PessoaInternaView {
   emailConfirmado: boolean;
 }
 
+/** Token do link de aceite (QA-004): o valor vai no e-mail; o banco guarda o hash. */
+function tokenDeAceite(): {
+  token: string;
+  campos: { conviteHash: string; conviteExpiraEm: Date };
+} {
+  const { token, campos } = gerarTokenUsoUnico(CONVITE_TTL_MS);
+  return {
+    token,
+    campos: {
+      conviteHash: campos.passwordResetTokenHash,
+      conviteExpiraEm: campos.passwordResetExpiresAt,
+    },
+  };
+}
+
 const paraView = (a: Acesso): AcessoInternoView => ({
   usuarioId: a.usuarioId,
   produto: a.produto,
@@ -67,10 +82,12 @@ const paraView = (a: Acesso): AcessoInternoView => ({
  * vínculo local e avisa a plataforma, que guarda o acesso, aplica o limite de
  * usuários da assinatura e manda o convite.
  *
- * Convite: pessoa sem senha (e-mail novo, ou só convites pendentes) ganha o
- * acesso `convitePendente` e o link de uso único (7 dias) para definir a
- * senha em `POST /auth/reset-password`. Quem já tem senha só ganha o acesso,
- * sem e-mail (o e-mail "você ganhou acesso a outra clínica" é _a definir_).
+ * Convite: o acesso nasce `convitePendente` e fica fora do login até a pessoa
+ * agir. Sem senha (e-mail novo, ou só convites pendentes): link de uso único
+ * (7 dias, token da pessoa) para definir a senha em `POST
+ * /auth/reset-password`. Já tem senha (QA-004): link de aceite (7 dias,
+ * token do acesso) em `GET /auth/aceitar-convite`. A resposta é a mesma nos
+ * dois casos (não revela se a conta existia).
  */
 @Injectable()
 export class AcessosService {
@@ -103,7 +120,11 @@ export class AcessosService {
           where: { usuarioId: existente.id, convitePendente: false },
         })
       : false;
+    // QA-004: todo convite fica pendente até a pessoa agir — quem não tem
+    // senha define a senha (token da pessoa); quem já tem aceita pelo link
+    // (token do acesso). A resposta é igual nos dois casos.
     const convite = temSenha ? null : gerarTokenUsoUnico(CONVITE_TTL_MS);
+    const aceite = temSenha ? tokenDeAceite() : null;
     const senha = existente ? null : await senhaDescartavel();
 
     const usuario = await this.dentroDoLimite(
@@ -124,7 +145,8 @@ export class AcessosService {
           tenantId: dto.tenantId,
           papel: dto.papel,
           ativo: true,
-          convitePendente: !temSenha,
+          convitePendente: true,
+          ...(aceite?.campos ?? {}),
         });
         return u;
       },
@@ -132,23 +154,47 @@ export class AcessosService {
     await this.auditar(produto, dto.tenantId, 'convidar', usuario.id);
     // B2: o acesso já está gravado; se o e-mail falhar, o produto grava o
     // vínculo mesmo assim e oferece "reenviar convite" (201, não 5xx).
-    const emailEnviado = convite
-      ? await this.mail
-          .sendConvite(email, usuario.nome, convite.token, produto)
-          .then(
-            () => true,
-            () => {
-              this.logger.warn('[acessos] convite gravado, e-mail não saiu.');
-              return false;
-            },
-          )
-      : false;
+    const envio = aceite
+      ? this.enviarAceite(usuario, aceite.token, produto, dto.tenantId)
+      : this.mail.sendConvite(
+          email,
+          usuario.nome,
+          (convite as { token: string }).token,
+          produto,
+        );
+    const emailEnviado = await envio.then(
+      () => true,
+      () => {
+        this.logger.warn('[acessos] convite gravado, e-mail não saiu.');
+        return false;
+      },
+    );
     return {
       usuarioId: usuario.id,
       novo: !existente,
-      convitePendente: !temSenha,
+      convitePendente: true,
       emailEnviado,
     };
+  }
+
+  /** E-mail de aceite (quem já tem conta), com o nome da clínica se houver. */
+  private async enviarAceite(
+    usuario: Usuario,
+    token: string,
+    produto: Produto,
+    tenantId: string,
+  ): Promise<void> {
+    const a = await this.ds.getRepository(Assinatura).findOne({
+      where: { produto, tenantId },
+      select: { id: true, tenantNome: true },
+    });
+    await this.mail.sendConviteAceite(
+      usuario.email,
+      usuario.nome,
+      token,
+      produto,
+      a?.tenantNome ?? null,
+    );
   }
 
   /**
@@ -202,11 +248,19 @@ export class AcessosService {
   ): Promise<void> {
     const acesso = await this.exigir(produto, dto.tenantId, dto.usuarioId);
     if (!acesso.convitePendente) {
-      throw new ConflictException('Esta pessoa já definiu a senha.');
+      throw new ConflictException('Esta pessoa já aceitou o convite.');
     }
     const usuario = await this.usuarios.findOneOrFail({
       where: { id: dto.usuarioId },
     });
+    if (acesso.conviteHash !== null) {
+      // QA-004: link de aceite novo (o anterior deixa de valer).
+      const { token, campos } = tokenDeAceite();
+      await this.acessos.update({ id: acesso.id }, campos);
+      await this.enviarAceite(usuario, token, produto, dto.tenantId);
+      await this.auditar(produto, dto.tenantId, 'reenviar-convite', usuario.id);
+      return;
+    }
     // O token é da pessoa: o link anterior deixa de valer.
     const { token, campos } = gerarTokenUsoUnico(CONVITE_TTL_MS);
     await this.usuarios.update({ id: usuario.id }, campos);

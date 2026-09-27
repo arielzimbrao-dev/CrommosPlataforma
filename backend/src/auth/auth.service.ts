@@ -7,7 +7,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { MoreThan, Repository } from 'typeorm';
+import { IsNull, MoreThan, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { Assinatura } from '../billing/assinatura.entity';
 import { sha256 } from '../common/crypto/segredo';
@@ -292,8 +292,10 @@ export class AuthService {
       },
     );
     if (!r.affected) throw invalido;
+    // Definir a senha aceita os convites de quem não tinha senha; os de aceite
+    // (quem já tinha conta — QA-004) só pelo link deles.
     await this.acessos.update(
-      { usuarioId: usuario.id, convitePendente: true },
+      { usuarioId: usuario.id, convitePendente: true, conviteHash: IsNull() },
       { convitePendente: false },
     );
     await this.sessoes.revogarDaPessoa(usuario.id);
@@ -351,6 +353,38 @@ export class AuthService {
       usuarioId: usuario.id,
       action: 'confirmar-email',
       resource: 'auth',
+    });
+    return true;
+  }
+
+  /**
+   * QA-004: aceite do convite de quem já tem conta, pelo link do e-mail (com
+   * ou sem sessão aberta). Consumo atômico; convite cancelado (acesso
+   * desativado) ou vencido → `false`.
+   */
+  async aceitarConvite(token: string): Promise<boolean> {
+    const hash = sha256(token);
+    const acesso = await this.acessos.findOne({
+      where: { conviteHash: hash },
+      select: { id: true, usuarioId: true, produto: true, tenantId: true },
+    });
+    if (!acesso) return false;
+    const r = await this.acessos.update(
+      {
+        id: acesso.id,
+        conviteHash: hash,
+        ativo: true,
+        conviteExpiraEm: MoreThan(new Date()),
+      },
+      { convitePendente: false, conviteHash: null, conviteExpiraEm: null },
+    );
+    if (!r.affected) return false;
+    await this.audit.registrar({
+      usuarioId: acesso.usuarioId,
+      produto: acesso.produto,
+      tenantId: acesso.tenantId,
+      action: 'aceitar-convite',
+      resource: 'acesso',
     });
     return true;
   }
@@ -426,6 +460,7 @@ export class AuthService {
            ON s.tenant_id = a.tenant_id AND s.produto = a.produto
           AND s.deleted_at IS NULL
         WHERE a.usuario_id = $1 AND a.produto = $2 AND a.ativo
+          AND NOT a.convite_pendente
           AND ($3::uuid IS NULL OR a.tenant_id = $3::uuid)`,
       [usuarioId, produto, tenantId ?? null],
     );
