@@ -3,9 +3,10 @@ import { createPrivateKey, createPublicKey } from 'node:crypto';
 /**
  * PEM vindo do ambiente: aceita o valor em várias linhas ou numa linha só com
  * `\n` escapado (formato comum em painéis de variáveis, como o do Coolify).
+ * `\\+n`: o Coolify entrega a barra dobrada (`\\n`); o base64 do PEM nunca tem `\`.
  */
 export function normalizarPem(valor: string): string {
-  return valor.replace(/\\n/g, '\n').trim();
+  return valor.replace(/\\+n/g, '\n').trim();
 }
 
 /**

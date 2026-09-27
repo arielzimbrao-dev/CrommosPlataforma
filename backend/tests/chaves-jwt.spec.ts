@@ -12,6 +12,13 @@ describe('chaves JWT (RS256)', () => {
     expect(pem).not.toContain('\\n');
   });
 
+  it('normalizarPem aceita a barra dobrada que o Coolify entrega (\\\\n)', () => {
+    const dobrar = (v: string) => v.replace(/\\n/g, '\\\\n');
+    expect(dobrar(pub)).toContain('\\\\n');
+    expect(normalizarPem(dobrar(pub))).toBe(normalizarPem(pub));
+    expect(erroNoParDeChaves(dobrar(priv), dobrar(pub))).toBeNull();
+  });
+
   it('par certo → sem erro', () => {
     expect(erroNoParDeChaves(priv, pub)).toBeNull();
   });
