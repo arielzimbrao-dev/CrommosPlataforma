@@ -282,6 +282,25 @@ describeDb('Billing (integração)', () => {
     expect(m.body.ativos).toEqual([]);
   });
 
+  it('QA-007: validação em pt-BR (nº de usuários fora da faixa)', async () => {
+    for (const numeroUsuarios of [5000, -1]) {
+      const r = await http()
+        .post('/assinatura/simular')
+        .set(como('admin'))
+        .send({ modulos: ['agenda'], numeroUsuarios, plano: 'mensal' })
+        .expect(400);
+      expect(r.body.message).toEqual(['Informe de 1 a 1000 usuários.']);
+    }
+    const r = await http()
+      .post('/assinatura/simular')
+      .set(como('admin'))
+      .send({ modulos: ['agenda'], numeroUsuarios: 2, plano: 'x' })
+      .expect(400);
+    expect(r.body.message).toEqual([
+      'plano deve ser um destes valores: mensal, semestral, anual.',
+    ]);
+  });
+
   it('QA-005: fatura que vence hoje não é "vencida"; a partir de amanhã é', async () => {
     const T_HOJE = randomUUID();
     const a = await criarAssinatura(ds, { tenantId: T_HOJE });

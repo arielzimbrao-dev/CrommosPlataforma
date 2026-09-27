@@ -10,6 +10,8 @@ import {
 } from 'class-validator';
 import { ModuleCode, PlanoPeriodo } from '../modules.catalog';
 
+const USUARIOS = 'Informe de 1 a 1000 usuários.';
+
 export class UpdateAssinaturaDto {
   @IsOptional()
   @IsArray()
@@ -20,8 +22,8 @@ export class UpdateAssinaturaDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(1)
-  @Max(1000)
+  @Min(1, { message: USUARIOS })
+  @Max(1000, { message: USUARIOS })
   numeroUsuarios?: number;
 
   @IsOptional()
@@ -37,8 +39,8 @@ export class SimularDto {
 
   @Type(() => Number)
   @IsInt()
-  @Min(1)
-  @Max(1000)
+  @Min(1, { message: USUARIOS })
+  @Max(1000, { message: USUARIOS })
   numeroUsuarios!: number;
 
   @IsEnum(PlanoPeriodo)

@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { traduzirValidacao } from './mensagens-validacao';
 
 /**
  * Mensagens de 409 por constraint (N-07). Constraint fora da lista cai na
@@ -65,6 +66,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
         typeof corpo === 'object' && corpo !== null && 'message' in corpo
           ? corpo.message
           : corpo;
+      // QA-007: mensagens padrão da validação (inglês) → pt-BR.
+      if (status === 400) message = traduzirValidacao(message);
     } else if (conflito) {
       status = HttpStatus.CONFLICT;
       message = conflito;
