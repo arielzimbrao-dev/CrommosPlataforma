@@ -246,6 +246,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
       '04-backfill-clinic.sql',
       '05-trial-inadimplencia-cobranca.sql',
       '06-rate-limit.sql',
+      '07-trial-cinco-usuarios.sql',
     ]);
     expect(await migrarPlataforma()).toEqual([]);
     estruturaVazio = await estrutura();
@@ -274,6 +275,31 @@ describeDb('Migrations da plataforma (plat_int)', () => {
           WHERE table_schema = 'public'`,
       );
       expect(fora.n).toBe(0);
+    } finally {
+      await c.end();
+    }
+  });
+
+  it('07: trials em andamento e não confirmados sobem para 5 usuários (QA-009)', async () => {
+    const c = await conectar('crommos,public');
+    try {
+      await c.query(
+        `INSERT INTO crommos.assinaturas (tenant_id, produto, ciclo_inicio, ciclo_fim, em_trial_ate, numero_usuarios, trial_confirmado_em)
+         VALUES (gen_random_uuid(), 'clinic', CURRENT_DATE, CURRENT_DATE + 14, CURRENT_DATE + 14, 1, NULL),
+                (gen_random_uuid(), 'clinic', CURRENT_DATE, CURRENT_DATE + 14, CURRENT_DATE + 14, 1, now()),
+                (gen_random_uuid(), 'clinic', CURRENT_DATE - 14, CURRENT_DATE, CURRENT_DATE, 1, NULL)`,
+      );
+      await c.query(
+        fs.readFileSync(
+          path.join(diretorioMigrations(), '07-trial-cinco-usuarios.sql'),
+          'utf8',
+        ),
+      );
+      const rows = await c.query<{ n: number }[]>(
+        `SELECT numero_usuarios AS n FROM crommos.assinaturas ORDER BY trial_confirmado_em NULLS FIRST, em_trial_ate DESC`,
+      );
+      // Só o trial ativo e não confirmado muda; confirmado e vencido ficam.
+      expect(rows.map((r) => r.n)).toEqual([5, 1, 1]);
     } finally {
       await c.end();
     }

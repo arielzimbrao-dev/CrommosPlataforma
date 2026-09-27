@@ -163,6 +163,8 @@ describeDb('API interna de acessos (integração)', () => {
       })
       .expect(409);
     expect(cheio.body.message).toMatch(/Limite de 2 usuário/);
+    // QA-009: orienta para a tela Assinatura.
+    expect(cheio.body.message).toMatch(/tela Assinatura/);
     // Nada ficou gravado (a pessoa nova também não).
     const [{ n }] = await ds.query(
       `SELECT count(*)::int AS n FROM crommos.usuarios WHERE email = 'mais@exemplo.com'`,

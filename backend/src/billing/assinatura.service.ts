@@ -110,6 +110,9 @@ export interface NovoTrial {
   tenantCodigo: string;
 }
 
+/** Usuários do trial (sem cobrança): a equipe avalia junto (QA-009). */
+export const USUARIOS_TRIAL = 5;
+
 /** Acessos que ocupam vaga: ativos (convites pendentes são ativos). */
 export function contarAcessosAtivos(
   em: EntityManager,
@@ -139,7 +142,8 @@ export class AssinaturaService {
   ) {}
 
   /**
-   * Assinatura em **trial** (signup): todos os módulos, 1 usuário, mensal; o
+   * Assinatura em **trial** (signup): todos os módulos, `USUARIOS_TRIAL`
+   * usuários (a equipe testa junto — QA-009), mensal; o
    * ciclo do trial vai de hoje a hoje + `dias` e a renovação abre o 1º ciclo
    * pago. Recebe o `EntityManager` da transação do signup.
    */
@@ -155,7 +159,7 @@ export class AssinaturaService {
       repo.create({
         ...t,
         modulosAtivos: [...MODULE_CODES],
-        numeroUsuarios: 1,
+        numeroUsuarios: USUARIOS_TRIAL,
         plano: PlanoPeriodo.Mensal,
         cicloInicio: hoje,
         cicloFim: fim,

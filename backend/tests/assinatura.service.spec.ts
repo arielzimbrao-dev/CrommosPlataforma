@@ -682,7 +682,7 @@ describe('AssinaturaService.iniciarTrial (signup)', () => {
       tenantNome: 'Clínica',
       tenantCodigo: 'ABCDE',
       modulosAtivos: MODULE_CODES,
-      numeroUsuarios: 1,
+      numeroUsuarios: 5, // QA-009: dá para testar com a equipe
       plano: PlanoPeriodo.Mensal,
       cicloInicio: HOJE,
       cicloFim: '2026-09-30',

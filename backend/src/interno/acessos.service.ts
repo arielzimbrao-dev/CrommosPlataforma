@@ -267,7 +267,7 @@ export class AcessosService {
         const ativos = await contarAcessosAtivos(em, produto, tenantId);
         if (ativos >= assinatura.numeroUsuarios) {
           throw new ConflictException(
-            `Limite de ${assinatura.numeroUsuarios} usuário(s) da assinatura atingido. Aumente o nº de usuários na assinatura para adicionar mais.`,
+            `Limite de ${assinatura.numeroUsuarios} usuário(s) da assinatura atingido. Um administrador pode aumentar o nº de usuários na tela Assinatura.`,
           );
         }
       }
