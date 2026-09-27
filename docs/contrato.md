@@ -7,7 +7,15 @@
 
 - Assinado pela plataforma (`PLATAFORMA_JWT_PRIVATE_KEY`, PEM). Produtos verificam com
   `PLATAFORMA_JWT_PUBLIC_KEY` (PEM). Algoritmo fixo `RS256`.
-- **Access** (15 min): `{ sub: <usuarioId>, produto: 'clinic'|'odonto'|'vet', tenantId: <uuid>, typ: 'access' }`.
+- **Access** (15 min): `{ sub: <usuarioId>, produto: 'clinic'|'odonto'|'vet', tenantId: <uuid>, typ: 'access', sid: <uuid> }`.
+- **`sid` (QA-002):** a **família** da sessão — o `jti` da 1ª sessão do login, herdado a cada
+  rotação do refresh (`crommos.sessoes.familia`). O access só vale enquanto a família tiver uma
+  sessão vigente: `EXISTS (SELECT 1 FROM crommos.sessoes WHERE familia = :sid AND usuario_id = :sub
+  AND revogada_em IS NULL AND expira_em > now())` (índice `idx_sessoes_familia`). Plataforma e
+  produto conferem a cada requisição e respondem `401` (`'Sessão encerrada.'`). Logout (revoga a
+  família inteira, inclusive as abas que renovaram juntas), redefinir/trocar a senha, desativação
+  e reuso de refresh derrubam o access **na hora**. **Transição:** access sem `sid` (emitido antes
+  desta versão) é aceito até expirar (≤ 15 min).
 - **Refresh** (7 dias, cookie httpOnly `crommos_rt`, path `/auth`, na origem da plataforma):
   `{ sub, produto, tenantId, typ: 'refresh', jti }`; uma sessão por `jti` em `crommos.sessoes`
   (hash do token), rotação a cada refresh.
@@ -24,8 +32,11 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
   plataforma usa para login (lista de clínicas), limite de usuários e permissão nas telas de
   assinatura (`admin` altera; `admin`/`financeiro` leem).
 - `sessoes` — `(jti pk, usuario_id, produto, tenant_id, refresh_hash, expira_em, revogada_em,
-  substituida_por, created_at)`. `substituida_por` = jti da sessão que a rotacionou (detecção de
-  reuso, ver abaixo).
+  substituida_por, familia, created_at)`. `substituida_por` = jti da sessão que a rotacionou
+  (detecção de reuso, ver abaixo); `familia` = `sid` do access (migration 08; o Clinic cria o
+  mesmo na 98 dele). O produto **lê** `sessoes` (`SELECT`).
+- `acessos` ganha `convite_hash`, `convite_expira_em` (migration 09): link de aceite do convite
+  de quem já tem conta (QA-004).
 - `assinaturas` ganha `tenant_nome varchar`, `tenant_codigo varchar(5)` (exibição na escolha de
   clínica; o código é gerado pela plataforma no signup).
 - `assinaturas` ganha `trial_confirmado_em timestamptz` e `inadimplente_desde date` (migration
@@ -46,24 +57,28 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
   manual) reativa na hora.
 - **No produto:** em modo leitura, `GET`/`HEAD`/`OPTIONS` passam; escrita responde **`402`** com
   `{ code: 'ASSINATURA_MODO_LEITURA', motivo: 'trial_expirado' | 'inadimplencia', message }`.
-  Login, sessão e as telas de assinatura (plataforma) continuam funcionando.
+  Login, sessão e as telas de assinatura (plataforma) continuam funcionando. **Exceção (QA-001):**
+  o admin reduz a equipe para confirmar/regularizar — desativar usuário e reenviar convite passam
+  (no produto e na API interna `PATCH /interno/acessos` e `reenviar-convite`, que não olham o modo
+  leitura).
 
 ## API pública da plataforma (`PLATAFORMA_URL`)
 
 | Método e rota | Corpo | Resposta |
 |---|---|---|
-| `POST /auth/login` | `{ email, password, produto, tenantId? }` (`tenantId` = UUID ou código de 5) | Sucesso: `{ accessToken, pessoa: { id, nome, email }, acesso: { produto, tenantId, papel } }` + cookie. Mais de um acesso ativo no produto e sem `tenantId`: `200 { escolherClinica: [{ tenantId, codigo, nome }] }` sem token. Credencial errada / sem acesso: `401` genérico |
+| `POST /auth/login` | `{ email, password, produto, tenantId? }` (`tenantId` = UUID ou código de 5) | Sucesso: `{ accessToken, pessoa: { id, nome, email }, acesso: { produto, tenantId, papel } }` + cookie. Mais de um acesso ativo (e não pendente) no produto e sem `tenantId`: `200 { escolherClinica: [{ tenantId, codigo, nome }] }` sem token. Credencial errada / sem acesso / convite ainda não aceito: `401` genérico. `429` depois de 5 falhas por IP + e-mail (ou 50 por IP) em 15 min (QA-003) |
 | `POST /auth/refresh` | cookie | igual ao sucesso do login (rotaciona) |
 | `POST /auth/logout` | cookie | `204` |
-| `POST /auth/forgot-password` | `{ email }` | `202` sempre |
+| `POST /auth/forgot-password` | `{ email }` | `202` sempre (no máximo 3 e-mails/h por endereço; acima disso, `202` sem envio) |
 | `POST /auth/reset-password` | `{ token, password }` | `204` (também define a senha do convite; revoga as sessões da pessoa) |
 | `POST /auth/trocar-senha` | `{ senhaAtual, novaSenha }` (autenticado) | sucesso do login (sessão nova; revoga as outras) |
 | `GET /auth/confirmar-email?token=` | — | redireciona para `FRONTEND_URL/login?emailConfirmado=1\|0` |
-| `POST /auth/reenviar-confirmacao` | — (autenticado) | `204`; `409` se já confirmado |
+| `GET /auth/aceitar-convite?token=` | — | QA-004: aceita o convite de quem já tem conta (link do e-mail) e redireciona para `FRONTEND_URL/login?conviteAceito=1\|0`; `0` = inválido, usado, vencido ou cancelado |
+| `POST /auth/reenviar-confirmacao` | — (autenticado) | `204`; `409` se já confirmado; `429` depois de 3/h por pessoa |
 | `POST /signup` | `{ produto, tipoCliente, documento, nomeClinica, cnpj?, nome, email, senha, nomeUnidade, aceiteTermos }` | `201` sucesso do login + `codigo`. `409` e-mail ou documento já cadastrado; `502` se o provisionamento falhar |
 | `POST /signup/clinica` | autenticado; `{ produto, tipoCliente, documento, nomeClinica, cnpj?, nomeUnidade }` | **Outra clínica na mesma conta** (R2): `201` sucesso do login **na clínica nova** + `codigo`. Documento de cliente existente só para quem é admin de uma clínica dele (`409` senão); `403` e-mail não confirmado; `502` provisionamento |
 | `GET /modulos` | autenticado | `{ catalogo, ativos, situacao: { modoLeitura, emTrialAte, trialConfirmado, faturaVencida: { vencimento, bloqueiaEm } \| null } }` |
-| `GET /assinatura` · `POST /assinatura/simular` · `PATCH /assinatura` · `GET /assinatura/faturas` | autenticado; `admin` altera, `admin`/`financeiro` leem | formatos do Clinic; `GET /assinatura` traz também `trialConfirmado`, `modoLeitura`, `faturaVencida: { id, vencimento, valorLiquido, bloqueiaEm } \| null` e `pagamentoOnline`. `PATCH` confirma o fim do trial |
+| `GET /assinatura` · `POST /assinatura/simular` · `PATCH /assinatura` · `GET /assinatura/faturas` | autenticado; `admin` altera, `admin`/`financeiro` leem | formatos do Clinic; `GET /assinatura` traz também `trialConfirmado`, `modoLeitura`, `faturaVencida: { id, vencimento, valorLiquido, bloqueiaEm } \| null` (só `vencimento < hoje`: a que vence hoje não está vencida — QA-005) e `pagamentoOnline`. `simular` traz também `primeiraFatura: { valorLiquido, periodoInicio, periodoFim, vencimento } \| null` (QA-006, ver abaixo). `PATCH` confirma o fim do trial |
 | `POST /assinatura/faturas/:id/pagamento` | `admin`/`financeiro` | `200 { url }` do checkout da AbacatePay (PIX/cartão), criado uma vez por fatura; `409` não pendente; `503` sem AbacatePay |
 | `POST /webhooks/abacatepay?webhookSecret=` | AbacatePay (`X-Webhook-Signature`) | `200 { recebido: true }`; baixa idempotente de `checkout.completed`/`billing.paid` depois de conferir o checkout `PAID` na API; `401` segredo/HMAC; `404` sem AbacatePay |
 | `GET /conta/dados` | autenticado | LGPD: `{ pessoa, acessos, sessoes, auditoria }` da própria pessoa |
@@ -80,10 +95,10 @@ constante; `404` sem chave configurada. O `produto` vem da chave, não do corpo.
 
 | Método e rota | Corpo | Resposta |
 |---|---|---|
-| `POST /interno/acessos` | `{ tenantId, email, nome, papel }` | `201 { usuarioId, novo, convitePendente, emailEnviado }` — quem não tem senha recebe e-mail de convite (token 7 dias). **E-mail que falhou não é erro** (B2): o acesso está gravado, `emailEnviado: false` → o produto grava o vínculo e oferece "reenviar convite". `409` já tem acesso neste tenant; `409` limite de usuários da assinatura (trava a linha da assinatura) |
+| `POST /interno/acessos` | `{ tenantId, email, nome, papel }` | `201 { usuarioId, novo, convitePendente, emailEnviado }` — **todo convite nasce pendente e manda e-mail** (QA-004): quem não tem senha recebe o link de definir a senha (token da pessoa, 7 dias); quem já tem conta recebe o link de aceite (`GET /auth/aceitar-convite`, token do acesso, 7 dias). `convitePendente` é sempre `true` — o produto **não** deve expor `novo` (revelaria se o e-mail tem conta). **E-mail que falhou não é erro** (B2): o acesso está gravado, `emailEnviado: false` → o produto grava o vínculo e oferece "reenviar convite". `409` já tem acesso neste tenant; `409` limite de usuários da assinatura (trava a linha da assinatura; a mensagem contém "Limite" e orienta para a tela Assinatura) |
 | `DELETE /interno/acessos` | `{ tenantId, usuarioId }` | `204` — compensação: o produto não conseguiu gravar o vínculo depois do `POST`; remove o acesso (libera a vaga) e revoga as sessões no tenant. `404` sem acesso |
 | `PATCH /interno/acessos` | `{ tenantId, usuarioId, papel?, ativo? }` | `200 { usuarioId, produto, tenantId, papel, ativo, convitePendente }` — desativar revoga as sessões da pessoa no tenant; reativar respeita o limite (`409`); `404` sem acesso |
-| `POST /interno/acessos/reenviar-convite` | `{ tenantId, usuarioId }` | `204`; `409` se a pessoa já definiu a senha |
+| `POST /interno/acessos/reenviar-convite` | `{ tenantId, usuarioId }` | `204` (link novo do mesmo tipo: definir senha ou aceite); `409` `'Esta pessoa já aceitou o convite.'` |
 | `GET /interno/pessoas/:usuarioId` | — | `{ id, nome, email, emailConfirmado }`; `404` se a pessoa não tem acesso a nenhum tenant do produto |
 
 ## API interna do produto (chamada pela plataforma)
@@ -106,6 +121,8 @@ acesso) e responde `502`.
 
 Com o access válido: `SELECT` no vínculo local por `(tenant_id, usuario_id)` ativo → `request.user =
 { sub: <id do vínculo>, usuarioId, tenantId, role, unidadeIds }`. Sem vínculo ativo → `401`.
+Com `sid` no token, confere também a sessão (consulta acima, em `crommos.sessoes`) → `401` se
+encerrada. O usuário de banco do produto precisa de `SELECT` em `crommos.sessoes`.
 
 ## Decisões de implementação (plataforma-api)
 
@@ -131,6 +148,23 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
   desativação só dá `401`. Refresh com o acesso desativado → `401`.
 - **Esqueci a senha** só envia para quem tem algum acesso ativo (a resposta é sempre `202`).
   `trocar-senha` com a senha atual errada → `400`.
+- **Rate limit (QA-003):** por IP, generoso (a clínica inteira sai pelo mesmo NAT): login 60/min,
+  forgot 30/h, reenviar confirmação 20/h, reset 10/h, aceite 20/h. Por alvo (`TentativasService`,
+  mesma tabela `crommos.rate_limit`, chaves com hash): login conta só **falhas** — 5 por IP +
+  e-mail e 50 por IP em 15 min → `429` antes do bcrypt; acertar a senha zera o par; forgot 3
+  e-mails/h por endereço (silencioso); reenviar confirmação 3/h por pessoa (`429`).
+- **Validação (QA-007):** o `AllExceptionsFilter` traduz para pt-BR as mensagens padrão do
+  class-validator/ParseUUIDPipe nos `400` (`mensagens-validacao.ts`); mensagens próprias dos DTOs
+  ficam como estão.
+- **Trial (QA-009):** nasce com 5 usuários (`USUARIOS_TRIAL`), sem cobrança; a migration 07 sobe
+  para 5 os trials em andamento ainda não confirmados.
+- **1ª fatura (QA-006):** `simular.primeiraFatura` = a fatura `ciclo` que a confirmação gera —
+  já (sem assinatura, ou trial vencido/modo leitura: período a partir de hoje) ou no fim do trial
+  ativo (período a partir de `em_trial_ate`); fora do trial, `null`. `valorLiquido` já desconta o
+  crédito. **Vencimento = 1º dia do período** (hoje, no trial vencido), como toda fatura de ciclo:
+  decisão pela coerência — a tolerância de 7 dias antes do modo leitura
+  (`DIAS_TOLERANCIA_INADIMPLENCIA`) já dá o prazo para pagar, e com o QA-005 a fatura do dia
+  aparece como "vence hoje", não "vencida".
 - **Links dos e-mails** e o redirect da confirmação usam `FRONTEND_URL` (uma base só); base por
   produto: _a definir_. CORS: `FRONTEND_URLS` (CSV), senão `FRONTEND_URL`.
 - **Signup:** `termosVersao` é aceito e ignorado (vale a versão do servidor); `cnpj` só vai ao
