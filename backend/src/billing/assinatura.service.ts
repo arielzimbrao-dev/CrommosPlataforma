@@ -7,6 +7,7 @@ import {
 import {
   DataSource,
   EntityManager,
+  LessThan,
   LessThanOrEqual,
   Repository,
 } from 'typeorm';
@@ -213,7 +214,8 @@ export class AssinaturaService {
         tenantId: a.tenantId,
         assinaturaId: a.id,
         status: 'pendente',
-        vencimento: LessThanOrEqual(hoje),
+        // QA-005: vencendo hoje ainda não venceu (só a partir de amanhã).
+        vencimento: LessThan(hoje),
       },
       order: { vencimento: 'ASC' },
     });
