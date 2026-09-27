@@ -91,7 +91,9 @@ describeDb('Billing (integração)', () => {
         .post('/assinatura/simular')
         .set(como(papel))
         .send({ modulos: ['agenda'], numeroUsuarios: 3, plano: 'mensal' })
-        .expect(201);
+        .expect(201)
+        // QA-006: fora do trial não há "1ª fatura" a mostrar.
+        .expect((r) => expect(r.body.primeiraFatura).toBeNull());
     }
     await http().get('/assinatura').set(como('gestor')).expect(403);
     await http().get('/assinatura/faturas').set(como('gestor')).expect(403);
