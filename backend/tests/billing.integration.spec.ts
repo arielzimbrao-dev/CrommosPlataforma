@@ -91,7 +91,9 @@ describeDb('Billing (integração)', () => {
         .post('/assinatura/simular')
         .set(como(papel))
         .send({ modulos: ['agenda'], numeroUsuarios: 3, plano: 'mensal' })
-        .expect(201);
+        .expect(201)
+        // QA-006: fora do trial não há "1ª fatura" a mostrar.
+        .expect((r) => expect(r.body.primeiraFatura).toBeNull());
     }
     await http().get('/assinatura').set(como('gestor')).expect(403);
     await http().get('/assinatura/faturas').set(como('gestor')).expect(403);
@@ -278,6 +280,54 @@ describeDb('Billing (integração)', () => {
     );
     m = await http().get('/modulos').set(auth).expect(200);
     expect(m.body.ativos).toEqual([]);
+  });
+
+  it('QA-007: validação em pt-BR (nº de usuários fora da faixa)', async () => {
+    for (const numeroUsuarios of [5000, -1]) {
+      const r = await http()
+        .post('/assinatura/simular')
+        .set(como('admin'))
+        .send({ modulos: ['agenda'], numeroUsuarios, plano: 'mensal' })
+        .expect(400);
+      expect(r.body.message).toEqual(['Informe de 1 a 1000 usuários.']);
+    }
+    const r = await http()
+      .post('/assinatura/simular')
+      .set(como('admin'))
+      .send({ modulos: ['agenda'], numeroUsuarios: 2, plano: 'x' })
+      .expect(400);
+    expect(r.body.message).toEqual([
+      'plano deve ser um destes valores: mensal, semestral, anual.',
+    ]);
+  });
+
+  it('QA-005: fatura que vence hoje não é "vencida"; a partir de amanhã é', async () => {
+    const T_HOJE = randomUUID();
+    const a = await criarAssinatura(ds, { tenantId: T_HOJE });
+    const p = await criarPessoa(ds, { email: 'vencehoje@bill.com' });
+    await criarAcesso(ds, { usuarioId: p.id, tenantId: T_HOJE });
+    const l = await http()
+      .post('/auth/login')
+      .send({ email: 'vencehoje@bill.com', password: SENHA, produto: 'clinic' })
+      .expect(200);
+    const auth = { Authorization: `Bearer ${l.body.accessToken as string}` };
+    const inserir = (vencimento: string) =>
+      ds.query(
+        `INSERT INTO crommos.faturas (tenant_id, assinatura_id, tipo, periodo_inicio,
+           periodo_fim, valor_bruto, valor_liquido, vencimento)
+         VALUES ($1, $2, 'ciclo', $3, $3, 10, 10, $3)`,
+        [T_HOJE, a.id, vencimento],
+      );
+    const hoje = hojeISO();
+    await inserir(hoje);
+    let m = await http().get('/modulos').set(auth).expect(200);
+    expect(m.body.situacao.faturaVencida).toBeNull();
+    const ontem = new Date(Date.parse(`${hoje}T00:00:00Z`) - 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    await inserir(ontem);
+    m = await http().get('/modulos').set(auth).expect(200);
+    expect(m.body.situacao.faturaVencida).toMatchObject({ vencimento: ontem });
   });
 
   it('pagamento online: sem AbacatePay configurada → 503; fatura de outro tenant → 404', async () => {

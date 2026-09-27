@@ -7,6 +7,7 @@ import {
 import {
   DataSource,
   EntityManager,
+  LessThan,
   LessThanOrEqual,
   Repository,
 } from 'typeorm';
@@ -78,6 +79,14 @@ export interface FaturaVencida {
   bloqueiaEm: string;
 }
 
+/** Fatura `ciclo` que a confirmação do trial vai gerar (QA-006). */
+export interface PrimeiraFatura {
+  valorLiquido: number;
+  periodoInicio: string;
+  periodoFim: string;
+  vencimento: string;
+}
+
 /** Situação para todos os papéis (banner do produto, `GET /modulos`). */
 export interface SituacaoAssinatura {
   modoLeitura: MotivoLeitura | null;
@@ -100,6 +109,9 @@ export interface NovoTrial {
   tenantNome: string;
   tenantCodigo: string;
 }
+
+/** Usuários do trial (sem cobrança): a equipe avalia junto (QA-009). */
+export const USUARIOS_TRIAL = 5;
 
 /** Acessos que ocupam vaga: ativos (convites pendentes são ativos). */
 export function contarAcessosAtivos(
@@ -130,7 +142,8 @@ export class AssinaturaService {
   ) {}
 
   /**
-   * Assinatura em **trial** (signup): todos os módulos, 1 usuário, mensal; o
+   * Assinatura em **trial** (signup): todos os módulos, `USUARIOS_TRIAL`
+   * usuários (a equipe testa junto — QA-009), mensal; o
    * ciclo do trial vai de hoje a hoje + `dias` e a renovação abre o 1º ciclo
    * pago. Recebe o `EntityManager` da transação do signup.
    */
@@ -146,7 +159,7 @@ export class AssinaturaService {
       repo.create({
         ...t,
         modulosAtivos: [...MODULE_CODES],
-        numeroUsuarios: 1,
+        numeroUsuarios: USUARIOS_TRIAL,
         plano: PlanoPeriodo.Mensal,
         cicloInicio: hoje,
         cicloFim: fim,
@@ -213,7 +226,8 @@ export class AssinaturaService {
         tenantId: a.tenantId,
         assinaturaId: a.id,
         status: 'pendente',
-        vencimento: LessThanOrEqual(hoje),
+        // QA-005: vencendo hoje ainda não venceu (só a partir de amanhã).
+        vencimento: LessThan(hoje),
       },
       order: { vencimento: 'ASC' },
     });
@@ -240,12 +254,14 @@ export class AssinaturaService {
     valor: number;
     ajuste: AjusteProRata | null;
     reducao: { abatidoEmPendentes: number; credito: number } | null;
+    primeiraFatura: PrimeiraFatura | null;
   }> {
     const valor = calcularValor(dto.modulos, dto.numeroUsuarios, dto.plano);
     const a = await this.buscar(ator);
     const ajuste = a ? this.proRata(a, valor, hoje) : null;
+    const primeiraFatura = this.primeiraFatura(a, valor, dto.plano, hoje);
     if (!a || ajuste?.tipo !== 'credito') {
-      return { valor, ajuste, reducao: null };
+      return { valor, ajuste, reducao: null, primeiraFatura };
     }
     const pendentes = await this.faturas.find({
       where: {
@@ -262,6 +278,35 @@ export class AssinaturaService {
       valor,
       ajuste,
       reducao: { abatidoEmPendentes: abatido / 100, credito: r.credito },
+      primeiraFatura,
+    };
+  }
+
+  /**
+   * QA-006: a fatura `ciclo` que a confirmação vai gerar — já (sem assinatura
+   * ou trial vencido: 1º ciclo a partir de hoje, como o `upsert`) ou no fim do
+   * trial ativo (renovação). Fora do trial, `null`. Vence no 1º dia do ciclo,
+   * como toda fatura de ciclo.
+   */
+  private primeiraFatura(
+    a: Assinatura | null,
+    valorMensal: number,
+    plano: PlanoPeriodo,
+    hoje: string,
+  ): PrimeiraFatura | null {
+    const agora = !a || (trialExpirado(a, hoje) && a.cicloFim <= hoje);
+    if (!agora && !emTrial(a.emTrialAte, hoje)) return null;
+    const c = renovarCiclo({
+      cicloFim: agora ? hoje : a.cicloFim,
+      plano,
+      valorMensal,
+      saldoCredito: a?.saldoCredito ?? 0,
+    });
+    return {
+      valorLiquido: c.valorLiquido,
+      periodoInicio: c.cicloInicio,
+      periodoFim: c.cicloFim,
+      vencimento: c.cicloInicio,
     };
   }
 

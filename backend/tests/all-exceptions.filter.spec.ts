@@ -54,6 +54,17 @@ describe('AllExceptionsFilter', () => {
     expect(send.mock.calls[0][0].message).toEqual(payload);
   });
 
+  it('QA-007: 400 da validação sai em pt-BR', () => {
+    const { host, send } = buildHost('/assinatura/simular', 'POST');
+    filter.catch(
+      new BadRequestException(['numeroUsuarios must not be greater than 1000']),
+      host,
+    );
+    expect(send.mock.calls[0][0].message).toEqual([
+      'numeroUsuarios não pode ser maior que 1000.',
+    ]);
+  });
+
   it('expõe só a mensagem das exceções do Nest (o front lê string)', () => {
     const { host, send } = buildHost('/usuarios', 'POST');
     filter.catch(new ConflictException('Limite atingido.'), host);

@@ -28,6 +28,13 @@ export class Sessao {
   @Column({ name: 'revogada_em', type: 'timestamptz', nullable: true })
   revogadaEm!: Date | null;
 
+  /**
+   * Família (QA-002): jti da 1ª sessão do login, herdado nas rotações. É o
+   * `sid` do access token (migration 08).
+   */
+  @Column({ type: 'uuid', nullable: true })
+  familia!: string | null;
+
   /** Rotação: jti da sessão que substituiu esta (reapresentar = reuso). */
   @Column({ name: 'substituida_por', type: 'uuid', nullable: true })
   substituidaPor!: string | null;

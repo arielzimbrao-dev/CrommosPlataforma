@@ -38,7 +38,11 @@ describeDb('API interna de acessos (integração)', () => {
   beforeAll(async () => {
     ({ app, ds } = await criarApp(mail));
     await limparBanco(ds);
-    await criarAssinatura(ds, { tenantId: T1, numeroUsuarios: 3 });
+    await criarAssinatura(ds, {
+      tenantId: T1,
+      numeroUsuarios: 3,
+      tenantNome: 'Clínica T1',
+    });
     await criarAssinatura(ds, { tenantId: T2, numeroUsuarios: 2 });
     const dono = await criarPessoa(ds, { email: 'dono@exemplo.com' });
     await criarAcesso(ds, { usuarioId: dono.id, tenantId: T1 });
@@ -121,7 +125,7 @@ describeDb('API interna de acessos (integração)', () => {
     expect(depois.convitePendente).toBe(false);
   });
 
-  it('pessoa que já tem senha: 201 { novo: false }, sem e-mail; entra com a senha que tem', async () => {
+  it('QA-004: pessoa que já tem senha: convite pendente + e-mail de aceite (como a nova); só entra depois de aceitar', async () => {
     const res = await interno('post', '/acessos')
       .send({
         tenantId: T1,
@@ -132,10 +136,38 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(201);
     expect(res.body).toMatchObject({
       novo: false,
-      convitePendente: false,
-      emailEnviado: false,
+      convitePendente: true,
+      emailEnviado: true,
     });
     expect(mail.sendConvite).not.toHaveBeenCalled();
+    expect(mail.sendConviteAceite).toHaveBeenCalledWith(
+      'outro@exemplo.com',
+      'Pessoa Teste',
+      expect.any(String),
+      'clinic',
+      'Clínica T1',
+    );
+    // Antes de aceitar, a clínica nova não aparece no login.
+    await login('outro@exemplo.com', T1).expect(401);
+    const semTenant = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'outro@exemplo.com', password: SENHA, produto: 'clinic' })
+      .expect(200);
+    expect(semTenant.body.acesso.tenantId).toBe(T2);
+
+    const token = ultimo(mail.sendConviteAceite, 2);
+    const ok = await request(app.getHttpServer())
+      .get(`/auth/aceitar-convite?token=${token}`)
+      .expect(302);
+    expect(ok.headers.location).toMatch(/\/login\?conviteAceito=1$/);
+    const deNovo = await request(app.getHttpServer())
+      .get(`/auth/aceitar-convite?token=${token}`)
+      .expect(302);
+    expect(deNovo.headers.location).toMatch(/conviteAceito=0$/);
+    const sem = await request(app.getHttpServer())
+      .get('/auth/aceitar-convite')
+      .expect(302);
+    expect(sem.headers.location).toMatch(/conviteAceito=0$/);
     const l = await login('outro@exemplo.com', T1).expect(200);
     expect(l.body.acesso).toEqual({
       produto: 'clinic',
@@ -163,6 +195,8 @@ describeDb('API interna de acessos (integração)', () => {
       })
       .expect(409);
     expect(cheio.body.message).toMatch(/Limite de 2 usuário/);
+    // QA-009: orienta para a tela Assinatura.
+    expect(cheio.body.message).toMatch(/tela Assinatura/);
     // Nada ficou gravado (a pessoa nova também não).
     const [{ n }] = await ds.query(
       `SELECT count(*)::int AS n FROM crommos.usuarios WHERE email = 'mais@exemplo.com'`,
@@ -230,6 +264,108 @@ describeDb('API interna de acessos (integração)', () => {
     await interno('patch', '/acessos')
       .send({ tenantId: T1, usuarioId: p.id, papel: 'Admin!' })
       .expect(400);
+  });
+
+  it('QA-004: aceite — link reenviado substitui o anterior; convite cancelado (desativado) ou expirado não aceita; reset de senha não aceita', async () => {
+    const p = await criarPessoa(ds, { email: 'aceite@exemplo.com' });
+    await criarAcesso(ds, { usuarioId: p.id, tenantId: T2 });
+    const aceitar = (token: string) =>
+      request(app.getHttpServer())
+        .get(`/auth/aceitar-convite?token=${token}`)
+        .expect(302);
+    const res = await interno('post', '/acessos')
+      .send({
+        tenantId: T_SEM,
+        email: 'aceite@exemplo.com',
+        nome: 'Aceite',
+        papel: 'gestor',
+      })
+      .expect(201);
+    const primeiro = ultimo(mail.sendConviteAceite, 2);
+    await interno('post', '/acessos/reenviar-convite')
+      .send({ tenantId: T_SEM, usuarioId: res.body.usuarioId })
+      .expect(204);
+    const segundo = ultimo(mail.sendConviteAceite, 2);
+    expect(segundo).not.toBe(primeiro);
+    expect(mail.sendConvite).not.toHaveBeenCalled();
+    expect((await aceitar(primeiro)).headers.location).toMatch(
+      /conviteAceito=0$/,
+    );
+
+    // Redefinir a senha não aceita o convite de quem já tinha senha.
+    await request(app.getHttpServer())
+      .post('/auth/forgot-password')
+      .send({ email: 'aceite@exemplo.com' })
+      .expect(202);
+    await request(app.getHttpServer())
+      .post('/auth/reset-password')
+      .send({
+        token: ultimo(mail.sendPasswordReset, 1),
+        password: 'nova-senha-9',
+      })
+      .expect(204);
+    await login('aceite@exemplo.com', T_SEM, 'nova-senha-9').expect(401);
+
+    // Cancelado (desativado): o link não vale.
+    await interno('patch', '/acessos')
+      .send({ tenantId: T_SEM, usuarioId: p.id, ativo: false })
+      .expect(200);
+    expect((await aceitar(segundo)).headers.location).toMatch(
+      /conviteAceito=0$/,
+    );
+    await interno('patch', '/acessos')
+      .send({ tenantId: T_SEM, usuarioId: p.id, ativo: true })
+      .expect(200);
+    // Expirado.
+    await ds.query(
+      `UPDATE crommos.acessos SET convite_expira_em = now() - interval '1 minute'
+        WHERE usuario_id = $1 AND tenant_id = $2`,
+      [p.id, T_SEM],
+    );
+    expect((await aceitar(segundo)).headers.location).toMatch(
+      /conviteAceito=0$/,
+    );
+    await interno('post', '/acessos/reenviar-convite')
+      .send({ tenantId: T_SEM, usuarioId: p.id })
+      .expect(204);
+    expect(
+      (await aceitar(ultimo(mail.sendConviteAceite, 2))).headers.location,
+    ).toMatch(/conviteAceito=1$/);
+    await login('aceite@exemplo.com', T_SEM, 'nova-senha-9').expect(200);
+    const r = await interno('post', '/acessos/reenviar-convite')
+      .send({ tenantId: T_SEM, usuarioId: p.id })
+      .expect(409);
+    expect(r.body.message).toBe('Esta pessoa já aceitou o convite.');
+  });
+
+  it('QA-001: em modo leitura (trial vencido) o produto ainda desativa acessos e reenvia convites', async () => {
+    const T_LEITURA = randomUUID();
+    await criarAssinatura(ds, {
+      tenantId: T_LEITURA,
+      numeroUsuarios: 5,
+      cicloInicio: '2026-01-01',
+      cicloFim: '2026-01-15',
+      emTrialAte: '2026-01-15',
+    });
+    const p = await criarPessoa(ds, { email: 'leitura@exemplo.com' });
+    await criarAcesso(ds, { usuarioId: p.id, tenantId: T_LEITURA });
+    const convidado = await interno('post', '/acessos')
+      .send({
+        tenantId: T_LEITURA,
+        email: 'pendente-leitura@exemplo.com',
+        nome: 'Pendente',
+        papel: 'recepcao',
+      })
+      .expect(201);
+    await interno('post', '/acessos/reenviar-convite')
+      .send({ tenantId: T_LEITURA, usuarioId: convidado.body.usuarioId })
+      .expect(204);
+    for (const usuarioId of [p.id, convidado.body.usuarioId as string]) {
+      const r = await interno('patch', '/acessos')
+        .send({ tenantId: T_LEITURA, usuarioId, ativo: false })
+        .expect(200);
+      expect(r.body.ativo).toBe(false);
+    }
   });
 
   it('reenviar convite: 204 com link novo enquanto pendente; 409 depois de definir a senha', async () => {

@@ -260,7 +260,71 @@ describe('AssinaturaService.simular', () => {
       },
       HOJE,
     );
-    expect(r).toEqual({ valor: 60, ajuste: null, reducao: null });
+    expect(r).toEqual({
+      valor: 60,
+      ajuste: null,
+      reducao: null,
+      primeiraFatura: {
+        valorLiquido: 60,
+        periodoInicio: HOJE,
+        periodoFim: '2026-10-16',
+        vencimento: HOJE,
+      },
+    });
+  });
+
+  const simularAgenda2 = (a: Assinatura | null) =>
+    make(a).svc.simular(
+      ATOR,
+      {
+        modulos: [ModuleCode.Agenda],
+        numeroUsuarios: 2,
+        plano: PlanoPeriodo.Mensal,
+      },
+      HOJE,
+    );
+
+  it('QA-006: trial expirado (modo leitura) → 1ª fatura = 1º ciclo a partir de hoje', async () => {
+    const r = await simularAgenda2(
+      assinatura({
+        cicloInicio: '2026-09-01',
+        cicloFim: '2026-09-15',
+        emTrialAte: '2026-09-15',
+        saldoCredito: 10,
+      }),
+    );
+    expect(r.primeiraFatura).toEqual({
+      valorLiquido: 50,
+      periodoInicio: HOJE,
+      periodoFim: '2026-10-16',
+      vencimento: HOJE,
+    });
+  });
+
+  it('QA-006: trial ativo → 1ª fatura = a do fim do trial (semestral: 6 meses)', async () => {
+    const { svc } = make(
+      assinatura({ cicloFim: '2026-09-30', emTrialAte: '2026-09-30' }),
+    );
+    const r = await svc.simular(
+      ATOR,
+      {
+        modulos: [ModuleCode.Agenda],
+        numeroUsuarios: 2,
+        plano: PlanoPeriodo.Semestral,
+      },
+      HOJE,
+    );
+    expect(r.primeiraFatura).toEqual({
+      valorLiquido: 342, // 57/mês (5% do semestral) × 6
+      periodoInicio: '2026-09-30',
+      periodoFim: '2027-03-30',
+      vencimento: '2026-09-30',
+    });
+  });
+
+  it('QA-006: assinatura paga (fora do trial) → sem 1ª fatura', async () => {
+    const r = await simularAgenda2(assinatura());
+    expect(r.primeiraFatura).toBeNull();
   });
 });
 
@@ -618,7 +682,7 @@ describe('AssinaturaService.iniciarTrial (signup)', () => {
       tenantNome: 'Clínica',
       tenantCodigo: 'ABCDE',
       modulosAtivos: MODULE_CODES,
-      numeroUsuarios: 1,
+      numeroUsuarios: 5, // QA-009: dá para testar com a equipe
       plano: PlanoPeriodo.Mensal,
       cicloInicio: HOJE,
       cicloFim: '2026-09-30',

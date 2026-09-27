@@ -5,6 +5,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PRODUTOS } from '../common/produtos';
 import { ITokenPayload } from '../common/interfaces/token-payload.interface';
 import { normalizarPem } from './chaves-jwt';
+import { SessoesService } from './sessoes.service';
 
 /**
  * Valida o **access token** (Bearer, RS256 com a chave pública da
@@ -12,7 +13,10 @@ import { normalizarPem } from './chaves-jwt';
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly sessoes: SessoesService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -23,7 +27,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  validate(payload: ITokenPayload): ITokenPayload {
+  async validate(payload: ITokenPayload): Promise<ITokenPayload> {
     // Só o access autentica rota (o refresh tem `typ: 'refresh'`).
     if (
       !payload?.sub ||
@@ -33,11 +37,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     ) {
       throw new UnauthorizedException('Token inválido.');
     }
+    // QA-002: logout/senha/desativação derrubam o access na hora. Sem `sid`
+    // (emitido antes desta versão): vale até expirar.
+    if (
+      payload.sid &&
+      !(await this.sessoes.sessaoVigente(payload.sid, payload.sub))
+    ) {
+      throw new UnauthorizedException('Sessão encerrada.');
+    }
     return {
       sub: payload.sub,
       produto: payload.produto,
       tenantId: payload.tenantId,
       typ: payload.typ,
+      ...(payload.sid ? { sid: payload.sid } : {}),
     };
   }
 }

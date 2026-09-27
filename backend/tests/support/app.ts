@@ -10,6 +10,7 @@ export function mailFalso() {
   return {
     sendPasswordReset: jest.fn().mockResolvedValue(undefined),
     sendConvite: jest.fn().mockResolvedValue(undefined),
+    sendConviteAceite: jest.fn().mockResolvedValue(undefined),
     sendConfirmacaoEmail: jest.fn().mockResolvedValue(undefined),
   };
 }
@@ -47,7 +48,7 @@ export async function limparBanco(ds: DataSource): Promise<void> {
   await ds.query(
     `TRUNCATE crommos.auditoria, crommos.sessoes, crommos.acessos,
               crommos.faturas, crommos.assinaturas, crommos.usuarios,
-              crommos.clientes CASCADE`,
+              crommos.clientes, crommos.rate_limit CASCADE`,
   );
 }
 

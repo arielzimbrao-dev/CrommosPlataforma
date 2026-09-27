@@ -40,13 +40,20 @@ npm ci && npm run start:dev
 
 ## Regras e armadilhas
 
-- **Token:** access 15 min `{ sub: pessoa, produto, tenantId, typ: 'access' }`; refresh 7 dias
+- **Token:** access 15 min `{ sub: pessoa, produto, tenantId, typ: 'access', sid }`; refresh 7 dias
   `{ …, typ: 'refresh', jti }` no cookie `crommos_rt` (httpOnly, path `/auth`). Papel **não** vai no
-  token: o `AcessoGuard` (e o produto, do lado dele) lê o acesso a cada requisição.
+  token: o `AcessoGuard` (e o produto, do lado dele) lê o acesso a cada requisição. `sid` = família
+  da sessão (`sessoes.familia`, herdada nas rotações): a `JwtStrategy` recusa o access se a família
+  não tem sessão vigente (logout/senha/desativação derrubam na hora); sem `sid` = token antigo,
+  vale até expirar.
 - **Sessões (`crommos.sessoes`):** uma por `jti`, só o hash. Refresh revoga a sessão e grava
   `substituida_por`. Reapresentar um refresh **já rotacionado** = reuso → revoga **todas** as
   sessões da pessoa (auditado `refresh-reutilizado`). Revogada sem substituta (logout, senha,
   desativação) só dá 401. Limpeza diária das vencidas (`SessoesCron`).
+- **Rate limit por alvo (`TentativasService`):** login conta só falhas (5 por IP + e-mail, 50 por
+  IP, 15 min; sucesso zera o par); forgot 3/h por e-mail; reenviar confirmação 3/h por pessoa.
+  Os `@Throttle` por IP são generosos (NAT da clínica). O `ThrottlerGuard` é desligado em teste;
+  o `TentativasService` não.
 - **Login:** bcrypt sempre (401 genérico). `tenantId` = UUID ou código (`assinaturas.tenant_codigo`,
   sem diferenciar maiúsculas). Mais de um acesso ativo no produto → `escolherClinica` sem token.
   Produto sem `<PRODUTO>_API_URL` + `SERVICO_KEY_<PRODUTO>` → 400.
@@ -56,9 +63,11 @@ npm ci && npm run start:dev
 - **Limite de usuários:** acessos ativos (convites pendentes são ativos) vs `numero_usuarios`, com a
   linha da assinatura em `FOR UPDATE` e a gravação **na mesma transação** (convite, reativação e
   `PATCH /assinatura`). Tenant sem assinatura (legado) não tem limite.
-- **Convite:** pessoa sem senha (nova, ou só convites pendentes) → acesso `convite_pendente` + token
-  de 7 dias na pessoa (o link anterior deixa de valer); define a senha em `POST /auth/reset-password`.
-  Quem já tem senha só ganha o acesso (sem e-mail).
+- **Convite:** todo acesso convidado nasce `convite_pendente` (fora do login) e sai e-mail. Pessoa
+  sem senha (nova, ou só convites pendentes) → token de 7 dias na pessoa (o link anterior deixa de
+  valer); define a senha em `POST /auth/reset-password` (aceita os convites sem `convite_hash`).
+  Quem já tem senha → token de 7 dias no acesso (`convite_hash`), aceite em
+  `GET /auth/aceitar-convite`. A resposta é igual nos dois casos (QA-004).
 - **Billing:** mesmas regras do Clinic (pró-rata em `billing/pro-rata.ts`, não duplicar; redução abate
   pendentes antes de virar crédito; fatura pendente não bloqueia). Lock da renovação com o **mesmo
   nome** do Clinic (`billing-renovacao`) para as duas APIs não renovarem juntas na transição.
