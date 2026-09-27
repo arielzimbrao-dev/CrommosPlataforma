@@ -435,6 +435,71 @@ describeDb('Auth (integração)', () => {
     });
   });
 
+  describe('rate limit (QA-003)', () => {
+    const http = () => request(app.getHttpServer());
+
+    it('login: sucesso não consome (equipe atrás do mesmo IP)', async () => {
+      for (let i = 0; i < 8; i++) {
+        await login({ email: 'ana@exemplo.com' }).expect(200);
+      }
+    });
+
+    it('login: 5 falhas por IP + e-mail bloqueiam o par (até a senha certa); outro e-mail segue', async () => {
+      const p = await criarPessoa(ds, { email: 'forca@exemplo.com' });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      for (let i = 0; i < 5; i++) {
+        await login({ email: 'forca@exemplo.com', password: 'errada-123' }).expect(401);
+      }
+      const bloqueado = await login({ email: 'FORCA@exemplo.com' }).expect(429);
+      expect(bloqueado.body.message).toMatch(/Muitas tentativas/);
+      await login({ email: 'ana@exemplo.com' }).expect(200);
+    });
+
+    it('login: acertar a senha zera as falhas do par', async () => {
+      const p = await criarPessoa(ds, { email: 'zera@exemplo.com' });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      for (let i = 0; i < 4; i++) {
+        await login({ email: 'zera@exemplo.com', password: 'errada-123' }).expect(401);
+      }
+      await login({ email: 'zera@exemplo.com' }).expect(200);
+      for (let i = 0; i < 4; i++) {
+        await login({ email: 'zera@exemplo.com', password: 'errada-123' }).expect(401);
+      }
+      await login({ email: 'zera@exemplo.com' }).expect(200);
+    });
+
+    it('forgot-password: no máximo 3 e-mails por hora para o mesmo endereço (resposta igual)', async () => {
+      const p = await criarPessoa(ds, { email: 'esqueci@exemplo.com' });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      mail.sendPasswordReset.mockClear();
+      for (let i = 0; i < 5; i++) {
+        await http()
+          .post('/auth/forgot-password')
+          .send({ email: 'esqueci@exemplo.com' })
+          .expect(202);
+      }
+      expect(mail.sendPasswordReset).toHaveBeenCalledTimes(3);
+    });
+
+    it('reenviar-confirmacao: 3 por hora por pessoa → 429', async () => {
+      const { campos } = gerarConfirmacaoEmail();
+      const p = await criarPessoa(ds, { email: 'reenvia3@exemplo.com', ...campos });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      const l = await login({ email: 'reenvia3@exemplo.com' }).expect(200);
+      const auth = `Bearer ${l.body.accessToken}`;
+      for (let i = 0; i < 3; i++) {
+        await http()
+          .post('/auth/reenviar-confirmacao')
+          .set('Authorization', auth)
+          .expect(204);
+      }
+      await http()
+        .post('/auth/reenviar-confirmacao')
+        .set('Authorization', auth)
+        .expect(429);
+    });
+  });
+
   it('health responde sem token', async () => {
     await request(app.getHttpServer())
       .get('/health')

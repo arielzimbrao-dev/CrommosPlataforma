@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   UnauthorizedException,
@@ -15,6 +17,7 @@ import { MailService } from '../mail/mail.service';
 import { Acesso } from './acesso.entity';
 import { LoginDto } from './dtos/login.dto';
 import { SessoesService } from './sessoes.service';
+import { TentativasService } from './tentativas.service';
 import {
   conferirSenha,
   gerarConfirmacaoEmail,
@@ -25,6 +28,10 @@ import {
   RESET_TOKEN_TTL_MS,
 } from './tokens';
 import { Usuario } from './usuario.entity';
+
+/** E-mails de senha/confirmação por alvo (endereço ou pessoa) por hora. */
+const ENVIOS_POR_HORA = 3;
+const HORA_MS = 3_600_000;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -94,6 +101,7 @@ export class AuthService {
     private readonly sessoes: SessoesService,
     private readonly mail: MailService,
     private readonly audit: AuditService,
+    private readonly tentativas: TentativasService,
   ) {}
 
   /**
@@ -102,10 +110,27 @@ export class AuthService {
    * resposta de erro é sempre o mesmo 401 (e o bcrypt roda sempre), para não
    * revelar se o e-mail, o tenant ou o acesso existem.
    */
-  async login(dto: LoginDto): Promise<ResultadoLogin> {
+  async login(dto: LoginDto, ip = ''): Promise<ResultadoLogin> {
     exigirProdutoDisponivel(dto.produto);
+    const email = normalizarEmail(dto.email);
+    // QA-003: só as falhas contam (por IP + e-mail e por IP); 429 antes do bcrypt.
+    await this.tentativas.exigirLoginLiberado(ip, email);
+    const r = await this.autenticar(dto, email).catch(async (e: unknown) => {
+      if (e instanceof UnauthorizedException) {
+        await this.tentativas.registrarFalhaLogin(ip, email);
+      }
+      throw e;
+    });
+    await this.tentativas.limparFalhasLogin(ip, email);
+    return r;
+  }
+
+  private async autenticar(
+    dto: LoginDto,
+    email: string,
+  ): Promise<ResultadoLogin> {
     const usuario = await this.usuarios.findOne({
-      where: { email: normalizarEmail(dto.email) },
+      where: { email },
       select: { id: true, email: true, nome: true, passwordHash: true },
     });
     const invalido = new UnauthorizedException('Credenciais inválidas.');
@@ -209,11 +234,21 @@ export class AuthService {
    * quem tem algum acesso ativo. A resposta é sempre a mesma (202).
    */
   async forgotPassword(email: string): Promise<void> {
+    const normalizado = normalizarEmail(email);
+    // QA-003: até 3 e-mails por hora para o mesmo endereço (o limite por IP,
+    // generoso, fica no controller). Acima disso, a mesma resposta, sem envio.
+    const permitido = await this.tentativas.permitir(
+      'forgot-email',
+      normalizado,
+      ENVIOS_POR_HORA,
+      HORA_MS,
+    );
     const usuario = await this.usuarios.findOne({
-      where: { email: normalizarEmail(email) },
+      where: { email: normalizado },
       select: { id: true, email: true },
     });
     if (
+      !permitido ||
       !usuario ||
       !(await this.acessos.exists({
         where: { usuarioId: usuario.id, ativo: true },
@@ -323,6 +358,19 @@ export class AuthService {
     const usuario = await this.usuarios.findOne({ where: { id: usuarioId } });
     if (!usuario?.emailConfirmacaoHash) {
       throw new ConflictException('O e-mail já está confirmado.');
+    }
+    // QA-003: por pessoa (o limite por IP, generoso, fica no controller).
+    const permitido = await this.tentativas.permitir(
+      'reenviar-confirmacao',
+      usuario.id,
+      ENVIOS_POR_HORA,
+      HORA_MS,
+    );
+    if (!permitido) {
+      throw new HttpException(
+        'Muitos envios. Aguarde alguns minutos e tente de novo.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
     const { token, campos } = gerarConfirmacaoEmail();
     await this.usuarios.update({ id: usuario.id }, campos);

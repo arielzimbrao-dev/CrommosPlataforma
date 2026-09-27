@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Ip,
   Post,
   Query,
   Redirect,
@@ -59,23 +60,29 @@ export function responderSessao(
 }
 
 /**
- * Login único e senha (docs/contrato.md). Rate limits por IP como no Clinic:
- * login 5/min, forgot 3/h, reset 10/h (convites atrás do mesmo IP da clínica).
+ * Login único e senha (docs/contrato.md). Rate limits (QA-003): por IP,
+ * generosos (a clínica inteira sai pelo mesmo NAT) — login 60/min, forgot
+ * 30/h, reenviar confirmação 20/h, reset 10/h; por alvo, no AuthService — 5
+ * falhas de login por IP + e-mail (e 50 por IP) em 15 min, 3 e-mails por
+ * hora por endereço/pessoa.
  */
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
-  @Throttle({ default: { ttl: MINUTO, limit: 5 } })
+  // Backstop por IP (todas as tentativas): generoso, para a clínica atrás de
+  // um NAT; as falhas são contadas no AuthService (IP + e-mail).
+  @Throttle({ default: { ttl: MINUTO, limit: 60 } })
   @IsPublic()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() dto: LoginDto,
+    @Ip() ip: string,
     @Res({ passthrough: true }) res: Response,
   ): Promise<SessaoResponse | EscolherClinica> {
-    const r = await this.auth.login(dto);
+    const r = await this.auth.login(dto, ip);
     // Mais de uma clínica: sem sessão; o cliente refaz com o `tenantId`.
     return 'escolherClinica' in r ? r : responderSessao(res, r);
   }
@@ -105,7 +112,7 @@ export class AuthController {
     clearRefreshCookie(res);
   }
 
-  @Throttle({ default: { ttl: HORA, limit: 3 } })
+  @Throttle({ default: { ttl: HORA, limit: 30 } })
   @IsPublic()
   @Post('forgot-password')
   @HttpCode(HttpStatus.ACCEPTED)
@@ -150,7 +157,7 @@ export class AuthController {
     return { url: `${urlDoFrontend()}/login?emailConfirmado=${ok ? 1 : 0}` };
   }
 
-  @Throttle({ default: { ttl: HORA, limit: 3 } })
+  @Throttle({ default: { ttl: HORA, limit: 20 } })
   @ApiBearerAuth()
   @Post('reenviar-confirmacao')
   @HttpCode(HttpStatus.NO_CONTENT)

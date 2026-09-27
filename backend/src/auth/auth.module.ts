@@ -12,6 +12,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { JwtStrategy } from './jwt.strategy';
 import { SessoesCron } from './sessoes.cron';
 import { SessoesService } from './sessoes.service';
+import { TentativasService } from './tentativas.service';
 
 /**
  * Login único, tokens RS256 e sessões. Registra globalmente, **nesta ordem**:
@@ -41,6 +42,7 @@ import { SessoesService } from './sessoes.service';
     AuthService,
     SessoesService,
     SessoesCron,
+    TentativasService,
     JwtStrategy,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: AcessoGuard },

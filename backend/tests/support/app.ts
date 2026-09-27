@@ -47,7 +47,7 @@ export async function limparBanco(ds: DataSource): Promise<void> {
   await ds.query(
     `TRUNCATE crommos.auditoria, crommos.sessoes, crommos.acessos,
               crommos.faturas, crommos.assinaturas, crommos.usuarios,
-              crommos.clientes CASCADE`,
+              crommos.clientes, crommos.rate_limit CASCADE`,
   );
 }
 
