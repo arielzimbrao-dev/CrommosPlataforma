@@ -70,7 +70,7 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
 | Método e rota | Corpo | Resposta |
 |---|---|---|
 | `POST /auth/login` | `{ email, password, produto, tenantId? }` (`tenantId` = UUID ou código de 5) | Sucesso: `{ accessToken, pessoa: { id, nome, email }, acesso: { produto, tenantId, papel } }` + cookie. Mais de um acesso ativo (e não pendente) no produto e sem `tenantId`: `200 { escolherClinica: [{ tenantId, codigo, nome }] }` sem token. Credencial errada / sem acesso / convite ainda não aceito: `401` genérico. `429` depois de 5 falhas por IP + e-mail (ou 50 por IP) em 15 min (QA-003) |
-| `POST /auth/refresh` | cookie | igual ao sucesso do login (rotaciona) |
+| `POST /auth/refresh` | cookie | igual ao sucesso do login (rotaciona). `401` = sessão encerrada. `429` depois de 20 renovações/min da mesma sessão (ou 300/min por IP): o refresh **não** é consumido — o cliente espera e tenta de novo, sem encerrar a sessão (QA-100) |
 | `POST /auth/logout` | cookie | `204` |
 | `POST /auth/forgot-password` | `{ email }` | `202` sempre (no máximo 3 e-mails/h por endereço; acima disso, `202` sem envio) |
 | `POST /auth/reset-password` | `{ token, password }` | `204` (também define a senha do convite; revoga as sessões da pessoa) |
@@ -155,10 +155,11 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
 - **Esqueci a senha** só envia para quem tem algum acesso ativo (a resposta é sempre `202`).
   `trocar-senha` com a senha atual errada → `400`.
 - **Rate limit (QA-003):** por IP, generoso (a clínica inteira sai pelo mesmo NAT): login 60/min,
-  forgot 30/h, reenviar confirmação 20/h, reset 10/h, aceite 20/h. Por alvo (`TentativasService`,
+  refresh 300/min (QA-100), forgot 30/h, reenviar confirmação 20/h, reset 10/h, aceite 20/h. Por alvo (`TentativasService`,
   mesma tabela `crommos.rate_limit`, chaves com hash): login conta só **falhas** — 5 por IP +
   e-mail e 50 por IP em 15 min → `429` antes do bcrypt; acertar a senha zera o par; forgot 3
-  e-mails/h por endereço (silencioso); reenviar confirmação 3/h por pessoa (`429`).
+  e-mails/h por endereço (silencioso); reenviar confirmação 3/h por pessoa (`429`); refresh 20/min
+  por sessão (família), conferido antes de consumir o token (`429` não derruba a sessão).
 - **Validação (QA-007):** o `AllExceptionsFilter` traduz para pt-BR as mensagens padrão do
   class-validator/ParseUUIDPipe nos `400` (`mensagens-validacao.ts`); mensagens próprias dos DTOs
   ficam como estão.

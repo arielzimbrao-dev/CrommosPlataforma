@@ -33,6 +33,9 @@ import { Usuario } from './usuario.entity';
 /** E-mails de senha/confirmação por alvo (endereço ou pessoa) por hora. */
 const ENVIOS_POR_HORA = 3;
 const HORA_MS = 3_600_000;
+const MINUTO_MS = 60_000;
+/** QA-100: renovações por sessão (família) por minuto. */
+const REFRESH_POR_SESSAO = 20;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -220,6 +223,22 @@ export class AuthService {
    * ativo (desativado depois do login) → 401.
    */
   async refresh(refreshToken: string): Promise<SessaoEmitida> {
+    // QA-100: limite por sessão ANTES de consumir — o 429 não gasta o refresh
+    const daSessao = await this.sessoes.familiaDo(refreshToken);
+    if (
+      daSessao &&
+      !(await this.tentativas.permitir(
+        'refresh-sessao',
+        daSessao,
+        REFRESH_POR_SESSAO,
+        MINUTO_MS,
+      ))
+    ) {
+      throw new HttpException(
+        'Muitas renovações de sessão. Aguarde alguns segundos e tente de novo.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
     const { claims, jtiNovo, familia } =
       await this.sessoes.consumir(refreshToken);
     const { usuario, acesso } = await this.exigirAcessoAtivo(claims);
