@@ -36,7 +36,10 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
   (detecção de reuso, ver abaixo); `familia` = `sid` do access (migration 08; o Clinic cria o
   mesmo na 98 dele). O produto **lê** `sessoes` (`SELECT`).
 - `acessos` ganha `convite_hash`, `convite_expira_em` (migration 09): link de aceite do convite
-  de quem já tem conta (QA-004).
+  de quem já tem conta (QA-004). O hash **fica** depois do aceite (`convite_pendente = false`),
+  para o link reaberto responder "já aceito". O produto **lê** `acessos` (`SELECT`, QA-027: a
+  lista de usuários não mostra "Convite pendente" de quem já aceitou); o Clinic cria a tabela igual
+  na migration 99 dele (idempotente, como a 98).
 - `assinaturas` ganha `tenant_nome varchar`, `tenant_codigo varchar(5)` (exibição na escolha de
   clínica; o código é gerado pela plataforma no signup).
 - `assinaturas` ganha `trial_confirmado_em timestamptz` e `inadimplente_desde date` (migration
@@ -124,7 +127,8 @@ acesso) e responde `502`.
 Com o access válido: `SELECT` no vínculo local por `(tenant_id, usuario_id)` ativo → `request.user =
 { sub: <id do vínculo>, usuarioId, tenantId, role, unidadeIds }`. Sem vínculo ativo → `401`.
 Com `sid` no token, confere também a sessão (consulta acima, em `crommos.sessoes`) → `401` se
-encerrada. O usuário de banco do produto precisa de `SELECT` em `crommos.sessoes`.
+encerrada. O usuário de banco do produto precisa de `SELECT` em `crommos.sessoes` e em
+`crommos.acessos` (estado do convite na lista de usuários, QA-027).
 
 ## Decisões de implementação (plataforma-api)
 
