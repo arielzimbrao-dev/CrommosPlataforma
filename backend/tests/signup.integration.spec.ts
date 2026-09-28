@@ -102,7 +102,7 @@ describeDb('Signup (integração)', () => {
       tenant_nome: 'Clínica Nova',
       tenant_codigo: res.body.codigo,
       trial: true,
-      numero_usuarios: 5, // QA-009
+      numero_usuarios: 1, // o admin; sem limite (assento por módulo)
       com_cliente: true,
     });
     expect(

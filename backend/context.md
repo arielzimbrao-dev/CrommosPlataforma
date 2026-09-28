@@ -60,9 +60,11 @@ npm ci && npm run start:dev
 - **Signup:** a transação grava cliente, pessoa, assinatura (trial 14 dias, `tenant_id` novo, código
   de 5) e acesso admin; **depois** chama o produto. Falha do produto → apaga o que criou e responde
   502. 409 por `uq_usuarios_email`/`uq_clientes_documento` (mensagem no `AllExceptionsFilter`).
-- **Limite de usuários:** acessos ativos (convites pendentes são ativos) vs `numero_usuarios`, com a
-  linha da assinatura em `FOR UPDATE` e a gravação **na mesma transação** (convite, reativação e
-  `PATCH /assinatura`). Tenant sem assinatura (legado) não tem limite.
+- **Assento por módulo (migration 10):** sem limite de pessoas. Os assentos vêm dos acessos
+  ativos (convite pendente conta) × papel/`clinico` (`modules.catalog.ts`); a faixa, do total de
+  pessoas. Convite, papel, ativo e `clinico` passam por `AssinaturaService.comReprecificacao`: linha
+  da assinatura em `FOR UPDATE`, grava e cobra a diferença no pró-rata (complementar ou crédito)
+  **na mesma transação**. `numero_usuarios` virou informativo (pessoas cobradas).
 - **Convite:** todo acesso convidado nasce `convite_pendente` (fora do login) e sai e-mail. Pessoa
   sem senha (nova, ou só convites pendentes) → token de 7 dias na pessoa (o link anterior deixa de
   valer); define a senha em `POST /auth/reset-password` (aceita os convites sem `convite_hash`).

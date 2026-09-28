@@ -38,6 +38,13 @@ export class Acesso {
   convitePendente!: boolean;
 
   /**
+   * Vinculado a um profissional de saúde no produto (migration 10): ocupa
+   * assento nos módulos clínicos (Prontuário, Exames). Informado pelo produto.
+   */
+  @Column({ type: 'boolean', default: false })
+  clinico!: boolean;
+
+  /**
    * QA-004: convite de quem já tem senha — hash do token do link de aceite
    * (`GET /auth/aceitar-convite`) e validade (migration 09). `null` no
    * convite de quem não tem senha (o token é o da pessoa).

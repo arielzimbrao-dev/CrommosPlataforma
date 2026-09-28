@@ -4,6 +4,8 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { Acesso } from 'src/auth/acesso.entity';
 import { gerarConfirmacaoEmail } from 'src/auth/tokens';
+import { somarMeses } from 'src/billing/pro-rata';
+import { hojeISO } from 'src/common/data-brasil';
 import {
   criarApp,
   fecharApp,
@@ -29,21 +31,23 @@ describeDb('API interna de acessos (integração)', () => {
   const mail = mailFalso();
   const CHAVE = process.env.SERVICO_KEY_CLINIC!;
   const CHAVE_ODONTO = process.env.SERVICO_KEY_ODONTO!;
-  const T1 = randomUUID(); // limite 3
-  const T2 = randomUUID(); // limite 2, cheio
-  const T_SEM = randomUUID(); // sem assinatura (legado): sem limite
+  const T1 = randomUUID();
+  const T2 = randomUUID();
+  const T_SEM = randomUUID(); // sem assinatura (legado): sem cobrança
 
   jest.setTimeout(60_000);
 
   beforeAll(async () => {
     ({ app, ds } = await criarApp(mail));
     await limparBanco(ds);
+    await criarAssinatura(ds, { tenantId: T1, tenantNome: 'Clínica T1' });
+    // Ciclo corrente começando hoje: o pró-rata é o mês inteiro.
+    const hoje = hojeISO();
     await criarAssinatura(ds, {
-      tenantId: T1,
-      numeroUsuarios: 3,
-      tenantNome: 'Clínica T1',
+      tenantId: T2,
+      cicloInicio: hoje,
+      cicloFim: somarMeses(hoje, 1),
     });
-    await criarAssinatura(ds, { tenantId: T2, numeroUsuarios: 2 });
     const dono = await criarPessoa(ds, { email: 'dono@exemplo.com' });
     await criarAcesso(ds, { usuarioId: dono.id, tenantId: T1 });
     await criarAcesso(ds, { usuarioId: dono.id, tenantId: T2 });
@@ -172,7 +176,7 @@ describeDb('API interna de acessos (integração)', () => {
     });
   });
 
-  it('409: já tem acesso neste tenant; limite de usuários da assinatura', async () => {
+  it('409: já tem acesso neste tenant', async () => {
     const dup = await interno('post', '/acessos')
       .send({
         tenantId: T1,
@@ -182,22 +186,50 @@ describeDb('API interna de acessos (integração)', () => {
       })
       .expect(409);
     expect(dup.body.message).toBe('Esta pessoa já tem acesso a esta clínica.');
-    const cheio = await interno('post', '/acessos')
+  });
+
+  it('assento por módulo: sem limite de pessoas; convite e vínculo clínico cobram a diferença no pró-rata', async () => {
+    const faturas = () =>
+      ds.query<{ valor_bruto: string; itens: { motivo: string } }[]>(
+        `SELECT f.valor_bruto, f.itens FROM crommos.faturas f
+           JOIN crommos.assinaturas a ON a.id = f.assinatura_id
+          WHERE a.tenant_id = $1 ORDER BY f.created_at`,
+        [T2],
+      );
+    // T2: dono + outro (admin, sem vínculo clínico). + 1 recepção: 3 pessoas.
+    const res = await interno('post', '/acessos')
       .send({
         tenantId: T2,
         email: 'mais@exemplo.com',
         nome: 'Mais',
-        papel: 'gestor',
+        papel: 'recepcao',
       })
-      .expect(409);
-    expect(cheio.body.message).toMatch(/Limite de 2 usuário/);
-    // QA-009: orienta para a tela Assinatura.
-    expect(cheio.body.message).toMatch(/tela Assinatura/);
-    // Nada ficou gravado (a pessoa nova também não).
-    const [{ n }] = await ds.query(
-      `SELECT count(*)::int AS n FROM crommos.usuarios WHERE email = 'mais@exemplo.com'`,
-    );
-    expect(n).toBe(0);
+      .expect(201);
+    let f = await faturas();
+    expect(f).toHaveLength(1);
+    // Agenda + Múltiplas unidades: + 25,50 + 12,75 = 38,25 no mês inteiro.
+    expect(Number(f[0].valor_bruto)).toBe(38.25);
+    expect(f[0].itens.motivo).toBe('assentos');
+
+    // Vínculo com profissional: o dono passa a ocupar Prontuário e Exames.
+    const dono = await ds
+      .getRepository(Acesso)
+      .findOneByOrFail({ tenantId: T2, papel: 'admin', clinico: false });
+    const r = await interno('patch', '/acessos')
+      .send({ tenantId: T2, usuarioId: dono.usuarioId, clinico: true })
+      .expect(200);
+    expect(r.body.clinico).toBe(true);
+    f = await faturas();
+    expect(Number(f[1].valor_bruto)).toBe(42.5); // 25,50 + 17
+
+    // Compensação (vínculo não gravado no produto): desfaz a cobrança.
+    await interno('delete', '/acessos')
+      .send({ tenantId: T2, usuarioId: res.body.usuarioId })
+      .expect(204);
+    // A redução abate as pendentes do ciclo (a mais recente primeiro).
+    f = await faturas();
+    const total = f.reduce((t, x) => t + Number(x.valor_bruto), 0);
+    expect(total).toBeCloseTo(42.5, 2);
   });
 
   it('tenant sem assinatura (legado) não tem limite; o produto vem da chave', async () => {
@@ -215,7 +247,7 @@ describeDb('API interna de acessos (integração)', () => {
     expect(acesso.produto).toBe('odonto');
   });
 
-  it('PATCH: papel; desativar revoga as sessões do tenant (não as de outro); reativar respeita o limite', async () => {
+  it('PATCH: papel; desativar revoga as sessões do tenant (não as de outro); reativar volta', async () => {
     const p = await criarPessoa(ds, { email: 'patch@exemplo.com' });
     await criarAcesso(ds, { usuarioId: p.id, tenantId: T1, papel: 'gestor' });
     await criarAcesso(ds, { usuarioId: p.id, tenantId: T_SEM });
@@ -240,15 +272,7 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(200);
     await login('patch@exemplo.com', T1).expect(401);
 
-    // T1 tem limite 3: dono, nova, outro → cheio; reativar → 409.
-    const cheio = await interno('patch', '/acessos')
-      .send({ tenantId: T1, usuarioId: p.id, ativo: true })
-      .expect(409);
-    expect(cheio.body.message).toMatch(/Limite de 3/);
-    await ds.query(
-      `UPDATE crommos.assinaturas SET numero_usuarios = 4 WHERE tenant_id = $1`,
-      [T1],
-    );
+    // Sem limite de pessoas: reativar só volta a cobrar o assento.
     await interno('patch', '/acessos')
       .send({ tenantId: T1, usuarioId: p.id, ativo: true })
       .expect(200);

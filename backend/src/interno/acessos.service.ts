@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { Acesso } from '../auth/acesso.entity';
 import { SessoesService } from '../auth/sessoes.service';
@@ -17,7 +17,7 @@ import {
 } from '../auth/tokens';
 import { Usuario } from '../auth/usuario.entity';
 import { Assinatura } from '../billing/assinatura.entity';
-import { contarAcessosAtivos } from '../billing/assinatura.service';
+import { AssinaturaService } from '../billing/assinatura.service';
 import type { Produto } from '../common/produtos';
 import { MailService } from '../mail/mail.service';
 import {
@@ -44,6 +44,7 @@ export interface AcessoInternoView {
   papel: string;
   ativo: boolean;
   convitePendente: boolean;
+  clinico: boolean;
 }
 
 export interface PessoaInternaView {
@@ -75,6 +76,7 @@ const paraView = (a: Acesso): AcessoInternoView => ({
   papel: a.papel,
   ativo: a.ativo,
   convitePendente: a.convitePendente,
+  clinico: a.clinico,
 });
 
 /**
@@ -102,6 +104,7 @@ export class AcessosService {
     private readonly sessoes: SessoesService,
     private readonly mail: MailService,
     private readonly audit: AuditService,
+    private readonly assinatura: AssinaturaService,
   ) {}
 
   async criar(produto: Produto, dto: CriarAcessoDto): Promise<AcessoCriado> {
@@ -127,7 +130,9 @@ export class AcessosService {
     const aceite = temSenha ? tokenDeAceite() : null;
     const senha = existente ? null : await senhaDescartavel();
 
-    const usuario = await this.dentroDoLimite(
+    // Assento por módulo: sem limite de pessoas; a diferença vai para o
+    // pró-rata da assinatura.
+    const usuario = await this.assinatura.comReprecificacao(
       produto,
       dto.tenantId,
       async (em) => {
@@ -144,6 +149,7 @@ export class AcessosService {
           produto,
           tenantId: dto.tenantId,
           papel: dto.papel,
+          clinico: dto.clinico ?? false,
           ativo: true,
           convitePendente: true,
           ...(aceite?.campos ?? {}),
@@ -199,11 +205,14 @@ export class AcessosService {
 
   /**
    * Compensação do produto: o vínculo local não pôde ser gravado depois do
-   * `criar`. Remove o acesso (libera a vaga); a pessoa fica (inofensiva).
+   * `criar`. Remove o acesso (desfaz a cobrança do assento); a pessoa fica
+   * (inofensiva).
    */
   async remover(produto: Produto, dto: RemoverAcessoDto): Promise<void> {
     const acesso = await this.exigir(produto, dto.tenantId, dto.usuarioId);
-    await this.acessos.delete({ id: acesso.id });
+    await this.assinatura.comReprecificacao(produto, dto.tenantId, (em) =>
+      em.delete(Acesso, { id: acesso.id }),
+    );
     await this.sessoes.revogarDaPessoa(dto.usuarioId, {
       produto,
       tenantId: dto.tenantId,
@@ -218,15 +227,18 @@ export class AcessosService {
     const acesso = await this.exigir(produto, dto.tenantId, dto.usuarioId);
     const desativando = dto.ativo === false && acesso.ativo;
     const reativando = dto.ativo === true && !acesso.ativo;
-    const gravar = (em: EntityManager) =>
-      em.save(Acesso, {
-        ...acesso,
-        papel: dto.papel ?? acesso.papel,
-        ativo: dto.ativo ?? acesso.ativo,
-      });
-    const salvo = reativando
-      ? await this.dentroDoLimite(produto, dto.tenantId, gravar)
-      : await gravar(this.ds.manager);
+    // Papel, ativo e vínculo clínico mudam os assentos: pró-rata.
+    const salvo = await this.assinatura.comReprecificacao(
+      produto,
+      dto.tenantId,
+      (em) =>
+        em.save(Acesso, {
+          ...acesso,
+          papel: dto.papel ?? acesso.papel,
+          ativo: dto.ativo ?? acesso.ativo,
+          clinico: dto.clinico ?? acesso.clinico,
+        }),
+    );
     if (desativando) {
       await this.sessoes.revogarDaPessoa(dto.usuarioId, {
         produto,
@@ -298,35 +310,6 @@ export class AcessosService {
     });
     if (!acesso) throw new NotFoundException('Acesso não encontrado.');
     return acesso;
-  }
-
-  /**
-   * Limite de usuários da assinatura: trava a linha da assinatura
-   * (`FOR UPDATE`, a mesma do `PATCH /assinatura`), confere a vaga e grava na
-   * mesma transação — convites simultâneos esperam um pelo outro. Acessos
-   * ativos (convites pendentes inclusos) ocupam vaga. Sem assinatura (tenant
-   * legado) não há limite.
-   */
-  private dentroDoLimite<R>(
-    produto: Produto,
-    tenantId: string,
-    gravar: (em: EntityManager) => Promise<R>,
-  ): Promise<R> {
-    return this.ds.transaction(async (em) => {
-      const assinatura = await em.getRepository(Assinatura).findOne({
-        where: { produto, tenantId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (assinatura) {
-        const ativos = await contarAcessosAtivos(em, produto, tenantId);
-        if (ativos >= assinatura.numeroUsuarios) {
-          throw new ConflictException(
-            `Limite de ${assinatura.numeroUsuarios} usuário(s) da assinatura atingido. Um administrador pode aumentar o nº de usuários na tela Assinatura.`,
-          );
-        }
-      }
-      return gravar(em);
-    });
   }
 
   private auditar(
