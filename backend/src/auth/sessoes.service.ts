@@ -120,6 +120,17 @@ export class SessoesService {
   }
 
   /** Claims de um refresh válido (assinatura, validade, `typ` e `jti`), ou `null`. */
+  /** Família da sessão do refresh (limite de renovações, QA-100); `null` se inválido. */
+  async familiaDo(token: string): Promise<string | null> {
+    const p = await this.lerRefresh(token);
+    if (!p) return null;
+    const s = await this.sessoes.findOne({
+      where: { jti: p.jti },
+      select: { jti: true, familia: true },
+    });
+    return s ? (s.familia ?? s.jti) : null;
+  }
+
   async lerRefresh(token: string): Promise<ITokenPayload | null> {
     try {
       const p = await this.jwt.verifyAsync<ITokenPayload>(token);

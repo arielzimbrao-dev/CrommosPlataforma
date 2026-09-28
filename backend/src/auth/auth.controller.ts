@@ -90,7 +90,10 @@ export class AuthController {
     return 'escolherClinica' in r ? r : responderSessao(res, r);
   }
 
-  @Throttle({ default: { ttl: MINUTO, limit: 20 } })
+  // QA-100: por IP, generoso (a clínica inteira atrás de um NAT renova junto);
+  // o limite estrito é por sessão (20/min, no AuthService). O 429 não encerra
+  // a sessão: o refresh não é consumido e o cliente tenta de novo.
+  @Throttle({ default: { ttl: MINUTO, limit: 300 } })
   @IsPublic()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)

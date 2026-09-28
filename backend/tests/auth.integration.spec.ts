@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { Acesso } from 'src/auth/acesso.entity';
+import { AuthController } from 'src/auth/auth.controller';
 import { gerarConfirmacaoEmail } from 'src/auth/tokens';
 import { Usuario } from 'src/auth/usuario.entity';
 import { normalizarPem } from 'src/auth/chaves-jwt';
@@ -573,6 +574,47 @@ describeDb('Auth (integração)', () => {
           .expect(202);
       }
       expect(mail.sendPasswordReset).toHaveBeenCalledTimes(3);
+    });
+
+    it('QA-100: refresh — 20 por minuto por sessão → 429, e a sessão continua valendo', async () => {
+      const p = await criarPessoa(ds, { email: 'renova@exemplo.com' });
+      await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
+      let c = cookieRefresh(
+        (await login({ email: 'renova@exemplo.com' }).expect(200)).headers,
+      );
+      for (let i = 0; i < 20; i++) {
+        const r = await http()
+          .post('/auth/refresh')
+          .set('Cookie', c)
+          .expect(200);
+        c = cookieRefresh(r.headers);
+      }
+      const bloqueado = await http()
+        .post('/auth/refresh')
+        .set('Cookie', c)
+        .expect(429);
+      expect(bloqueado.body.message).toMatch(/Muitas renovações/);
+      // o 429 não consome o refresh: a sessão segue vigente
+      const [{ vigentes }] = await ds.query<{ vigentes: string }[]>(
+        `SELECT count(*) AS vigentes FROM crommos.sessoes
+          WHERE usuario_id = $1 AND revogada_em IS NULL`,
+        [p.id],
+      );
+      expect(Number(vigentes)).toBe(1);
+      // outra pessoa (outra sessão) no mesmo IP segue renovando
+      const outra = cookieRefresh(
+        (await login({ email: 'ana@exemplo.com' }).expect(200)).headers,
+      );
+      await http().post('/auth/refresh').set('Cookie', outra).expect(200);
+    });
+
+    it('QA-100: o limite do refresh por IP comporta uma clínica atrás de NAT', () => {
+      expect(
+        Reflect.getMetadata(
+          'THROTTLER:LIMITdefault',
+          AuthController.prototype.refresh,
+        ),
+      ).toBe(300);
     });
 
     it('reenviar-confirmacao: 3 por hora por pessoa → 429', async () => {
