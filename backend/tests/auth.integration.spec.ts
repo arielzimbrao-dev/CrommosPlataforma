@@ -148,7 +148,7 @@ describeDb('Auth (integração)', () => {
       ];
       for (const c of casos) {
         const res = await login(c).expect(401);
-        expect(res.body.message).toBe('Credenciais inválidas.');
+        expect(res.body.message).toBe('E-mail ou senha incorretos.');
       }
     });
 
