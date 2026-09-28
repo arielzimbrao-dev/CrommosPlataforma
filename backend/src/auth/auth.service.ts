@@ -16,6 +16,7 @@ import { configProduto, Produto } from '../common/produtos';
 import { MailService } from '../mail/mail.service';
 import { Acesso } from './acesso.entity';
 import { LoginDto } from './dtos/login.dto';
+import type { TipoToken } from './dtos/senha.dtos';
 import { SessoesService } from './sessoes.service';
 import { TentativasService } from './tentativas.service';
 import {
@@ -68,6 +69,13 @@ export interface EscolherClinica {
 }
 
 export type ResultadoLogin = SessaoEmitida | EscolherClinica;
+
+export type MotivoTokenInvalido = 'expirado' | 'usado' | 'invalido';
+
+/** `GET /auth/verificar-token` (docs/contrato.md). */
+export type VerificacaoToken =
+  | { valido: true; email: string; clinicaNome: string | null }
+  | { valido: false; motivo: MotivoTokenInvalido };
 
 interface LinhaAcesso {
   tenant_id: string;
@@ -358,35 +366,130 @@ export class AuthService {
   }
 
   /**
-   * QA-004: aceite do convite de quem já tem conta, pelo link do e-mail (com
-   * ou sem sessão aberta). Consumo atômico; convite cancelado (acesso
-   * desativado) ou vencido → `false`.
+   * Situação do link de um e-mail, para a página do front avisar ao abrir
+   * (sem consumir o token). Definir/redefinir senha usam o token da pessoa; o
+   * convite de quem já tem conta, o do acesso. Token de pessoa já usado é
+   * apagado no uso, então aparece como `invalido`.
    */
-  async aceitarConvite(token: string): Promise<boolean> {
+  async verificarToken(
+    tipo: TipoToken,
+    token: string,
+  ): Promise<VerificacaoToken> {
     const hash = sha256(token);
-    const acesso = await this.acessos.findOne({
-      where: { conviteHash: hash },
-      select: { id: true, usuarioId: true, produto: true, tenantId: true },
+    if (tipo === 'aceitar-convite') {
+      const s = await this.situacaoConvite(hash);
+      return s.valido
+        ? { valido: true, email: s.email, clinicaNome: s.clinicaNome }
+        : s;
+    }
+    const u = await this.usuarios.findOne({
+      where: { passwordResetTokenHash: hash },
+      select: { id: true, email: true, passwordResetExpiresAt: true },
     });
-    if (!acesso) return false;
+    if (!u) return { valido: false, motivo: 'invalido' };
+    if ((u.passwordResetExpiresAt?.getTime() ?? 0) <= Date.now()) {
+      return { valido: false, motivo: 'expirado' };
+    }
+    return {
+      valido: true,
+      email: u.email,
+      clinicaNome:
+        tipo === 'definir-senha' ? await this.clinicaDoConvite(u.id) : null,
+    };
+  }
+
+  /**
+   * Aceite do convite de quem já tem conta (QA-004), pelo botão da página do
+   * front (`POST`; um leitor de links não aceita sozinho). Consumo atômico. O
+   * hash fica gravado depois do aceite para o link reaberto dizer "já aceito".
+   */
+  async aceitarConvite(token: string): Promise<{ clinicaNome: string | null }> {
+    const hash = sha256(token);
+    const s = await this.situacaoConvite(hash);
+    const jaAceito = new ConflictException({
+      code: 'CONVITE_JA_ACEITO',
+      message: 'Este convite já foi aceito. Entre com a sua conta.',
+    });
+    if (!s.valido) {
+      if (s.motivo === 'usado') throw jaAceito;
+      throw new BadRequestException({
+        code: 'CONVITE_INVALIDO',
+        message:
+          s.motivo === 'expirado'
+            ? 'O convite venceu. Peça um novo convite à clínica.'
+            : 'O convite é inválido ou foi cancelado.',
+      });
+    }
     const r = await this.acessos.update(
       {
-        id: acesso.id,
+        id: s.acesso.id,
         conviteHash: hash,
+        convitePendente: true,
         ativo: true,
         conviteExpiraEm: MoreThan(new Date()),
       },
-      { convitePendente: false, conviteHash: null, conviteExpiraEm: null },
+      { convitePendente: false },
     );
-    if (!r.affected) return false;
+    if (!r.affected) throw jaAceito; // outra requisição aceitou antes
     await this.audit.registrar({
-      usuarioId: acesso.usuarioId,
-      produto: acesso.produto,
-      tenantId: acesso.tenantId,
+      usuarioId: s.acesso.usuarioId,
+      produto: s.acesso.produto,
+      tenantId: s.acesso.tenantId,
       action: 'aceitar-convite',
       resource: 'acesso',
     });
-    return true;
+    return { clinicaNome: s.clinicaNome };
+  }
+
+  private async situacaoConvite(hash: string): Promise<
+    | { valido: false; motivo: MotivoTokenInvalido }
+    | {
+        valido: true;
+        acesso: Acesso;
+        email: string;
+        clinicaNome: string | null;
+      }
+  > {
+    const acesso = await this.acessos.findOne({ where: { conviteHash: hash } });
+    if (!acesso) return { valido: false, motivo: 'invalido' };
+    if (!acesso.convitePendente) return { valido: false, motivo: 'usado' };
+    if (!acesso.ativo) return { valido: false, motivo: 'invalido' };
+    if ((acesso.conviteExpiraEm?.getTime() ?? 0) <= Date.now()) {
+      return { valido: false, motivo: 'expirado' };
+    }
+    const [usuario, assinatura] = await Promise.all([
+      this.usuarios.findOneOrFail({
+        where: { id: acesso.usuarioId },
+        select: { id: true, email: true },
+      }),
+      this.assinaturas.findOne({
+        where: { produto: acesso.produto, tenantId: acesso.tenantId },
+        select: { id: true, tenantNome: true },
+      }),
+    ]);
+    return {
+      valido: true,
+      acesso,
+      email: usuario.email,
+      clinicaNome: assinatura?.tenantNome ?? null,
+    };
+  }
+
+  /** Nome da clínica do convite pendente mais recente de quem define a senha. */
+  private async clinicaDoConvite(usuarioId: string): Promise<string | null> {
+    const linhas: { nome: string | null }[] = await this.acessos.query(
+      `SELECT s.tenant_nome AS nome
+         FROM crommos.acessos a
+         LEFT JOIN crommos.assinaturas s
+           ON s.tenant_id = a.tenant_id AND s.produto = a.produto
+          AND s.deleted_at IS NULL
+        WHERE a.usuario_id = $1 AND a.ativo AND a.convite_pendente
+          AND a.convite_hash IS NULL
+        ORDER BY a.created_at DESC
+        LIMIT 1`,
+      [usuarioId],
+    );
+    return linhas[0]?.nome ?? null;
   }
 
   /** Novo link de confirmação (o anterior deixa de valer). 409 se já confirmado. */

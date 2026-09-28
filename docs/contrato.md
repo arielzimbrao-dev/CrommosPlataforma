@@ -36,7 +36,10 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
   (detecção de reuso, ver abaixo); `familia` = `sid` do access (migration 08; o Clinic cria o
   mesmo na 98 dele). O produto **lê** `sessoes` (`SELECT`).
 - `acessos` ganha `convite_hash`, `convite_expira_em` (migration 09): link de aceite do convite
-  de quem já tem conta (QA-004).
+  de quem já tem conta (QA-004). O hash **fica** depois do aceite (`convite_pendente = false`),
+  para o link reaberto responder "já aceito". O produto **lê** `acessos` (`SELECT`, QA-027: a
+  lista de usuários não mostra "Convite pendente" de quem já aceitou); o Clinic cria a tabela igual
+  na migration 99 dele (idempotente, como a 98).
 - `assinaturas` ganha `tenant_nome varchar`, `tenant_codigo varchar(5)` (exibição na escolha de
   clínica; o código é gerado pela plataforma no signup).
 - `assinaturas` ganha `trial_confirmado_em timestamptz` e `inadimplente_desde date` (migration
@@ -73,7 +76,9 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
 | `POST /auth/reset-password` | `{ token, password }` | `204` (também define a senha do convite; revoga as sessões da pessoa) |
 | `POST /auth/trocar-senha` | `{ senhaAtual, novaSenha }` (autenticado) | sucesso do login (sessão nova; revoga as outras) |
 | `GET /auth/confirmar-email?token=` | — | redireciona para `FRONTEND_URL/login?emailConfirmado=1\|0` |
-| `GET /auth/aceitar-convite?token=` | — | QA-004: aceita o convite de quem já tem conta (link do e-mail) e redireciona para `FRONTEND_URL/login?conviteAceito=1\|0`; `0` = inválido, usado, vencido ou cancelado |
+| `GET /auth/verificar-token?tipo=definir-senha\|redefinir-senha\|aceitar-convite&token=` | — | A página do link valida o token ao abrir, **sem consumi-lo**: `200 { valido: true, email, clinicaNome: string \| null }` (`clinicaNome` no convite; em `redefinir-senha` é `null`) ou `200 { valido: false, motivo: 'expirado' \| 'usado' \| 'invalido' }`. Convite já aceito → `usado`; convite cancelado (acesso desativado) → `invalido`; token de senha já usado some no uso → `invalido`. `400` tipo/token ausente ou inválido. Rate limit por IP como as demais rotas de token (20/h) |
+| `POST /auth/aceitar-convite` | `{ token }` | Aceite do convite de quem já tem conta, pelo botão da página `FRONTEND_URL/aceitar-convite?token=` (o link do e-mail aponta para ela): `200 { clinicaNome }`; `409 { code: 'CONVITE_JA_ACEITO' }`; `400 { code: 'CONVITE_INVALIDO' }` (desconhecido, vencido ou cancelado) |
+| `GET /auth/aceitar-convite?token=` | — | Link dos e-mails antigos: **não aceita mais** (leitor de links de e-mail aceitaria sozinho); só redireciona para `FRONTEND_URL/aceitar-convite?token=` |
 | `POST /auth/reenviar-confirmacao` | — (autenticado) | `204`; `409` se já confirmado; `429` depois de 3/h por pessoa |
 | `POST /signup` | `{ produto, tipoCliente, documento, nomeClinica, cnpj?, nome, email, senha, nomeUnidade, aceiteTermos }` | `201` sucesso do login + `codigo`. `409` e-mail ou documento já cadastrado; `502` se o provisionamento falhar |
 | `POST /signup/clinica` | autenticado; `{ produto, tipoCliente, documento, nomeClinica, cnpj?, nomeUnidade }` | **Outra clínica na mesma conta** (R2): `201` sucesso do login **na clínica nova** + `codigo`. Documento de cliente existente só para quem é admin de uma clínica dele (`409` senão); `403` e-mail não confirmado; `502` provisionamento |
@@ -95,7 +100,7 @@ constante; `404` sem chave configurada. O `produto` vem da chave, não do corpo.
 
 | Método e rota | Corpo | Resposta |
 |---|---|---|
-| `POST /interno/acessos` | `{ tenantId, email, nome, papel }` | `201 { usuarioId, novo, convitePendente, emailEnviado }` — **todo convite nasce pendente e manda e-mail** (QA-004): quem não tem senha recebe o link de definir a senha (token da pessoa, 7 dias); quem já tem conta recebe o link de aceite (`GET /auth/aceitar-convite`, token do acesso, 7 dias). `convitePendente` é sempre `true` — o produto **não** deve expor `novo` (revelaria se o e-mail tem conta). **E-mail que falhou não é erro** (B2): o acesso está gravado, `emailEnviado: false` → o produto grava o vínculo e oferece "reenviar convite". `409` já tem acesso neste tenant; `409` limite de usuários da assinatura (trava a linha da assinatura; a mensagem contém "Limite" e orienta para a tela Assinatura) |
+| `POST /interno/acessos` | `{ tenantId, email, nome, papel }` | `201 { usuarioId, novo, convitePendente, emailEnviado }` — **todo convite nasce pendente e manda e-mail** (QA-004): quem não tem senha recebe o link de definir a senha (token da pessoa, 7 dias); quem já tem conta recebe o link de aceite (`FRONTEND_URL/aceitar-convite?token=`, página com o botão que chama `POST /auth/aceitar-convite`; token do acesso, 7 dias). `convitePendente` é sempre `true` — o produto **não** deve expor `novo` (revelaria se o e-mail tem conta). **E-mail que falhou não é erro** (B2): o acesso está gravado, `emailEnviado: false` → o produto grava o vínculo e oferece "reenviar convite". `409` já tem acesso neste tenant; `409` limite de usuários da assinatura (trava a linha da assinatura; a mensagem contém "Limite" e orienta para a tela Assinatura) |
 | `DELETE /interno/acessos` | `{ tenantId, usuarioId }` | `204` — compensação: o produto não conseguiu gravar o vínculo depois do `POST`; remove o acesso (libera a vaga) e revoga as sessões no tenant. `404` sem acesso |
 | `PATCH /interno/acessos` | `{ tenantId, usuarioId, papel?, ativo? }` | `200 { usuarioId, produto, tenantId, papel, ativo, convitePendente }` — desativar revoga as sessões da pessoa no tenant; reativar respeita o limite (`409`); `404` sem acesso |
 | `POST /interno/acessos/reenviar-convite` | `{ tenantId, usuarioId }` | `204` (link novo do mesmo tipo: definir senha ou aceite); `409` `'Esta pessoa já aceitou o convite.'` |
@@ -122,7 +127,8 @@ acesso) e responde `502`.
 Com o access válido: `SELECT` no vínculo local por `(tenant_id, usuario_id)` ativo → `request.user =
 { sub: <id do vínculo>, usuarioId, tenantId, role, unidadeIds }`. Sem vínculo ativo → `401`.
 Com `sid` no token, confere também a sessão (consulta acima, em `crommos.sessoes`) → `401` se
-encerrada. O usuário de banco do produto precisa de `SELECT` em `crommos.sessoes`.
+encerrada. O usuário de banco do produto precisa de `SELECT` em `crommos.sessoes` e em
+`crommos.acessos` (estado do convite na lista de usuários, QA-027).
 
 ## Decisões de implementação (plataforma-api)
 
