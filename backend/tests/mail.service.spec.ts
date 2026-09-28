@@ -40,8 +40,8 @@ describe('MailService', () => {
     expect(corpo()).toContain('Bia');
   });
 
-  it('QA-004: convite de quem já tem conta aponta para o aceite na API, com o nome da clínica', async () => {
-    process.env.API_URL = 'https://conta.crommos.com';
+  it('convite de quem já tem conta aponta para a página de aceite do front, com o nome da clínica', async () => {
+    process.env.FRONTEND_URL = 'https://app.crommos.com';
     await make().sendConviteAceite(
       'bia@x.com',
       'Bia',
@@ -50,10 +50,10 @@ describe('MailService', () => {
       'Clínica Sol',
     );
     await make().sendConviteAceite('bia@x.com', 'Bia', 'tok-8', 'clinic', null);
-    delete process.env.API_URL;
+    delete process.env.FRONTEND_URL;
     expect(enviarEmail.mock.calls[0][1]).toBe('Convite para o Crommos Clinic');
     expect(corpo(0)).toContain(
-      'https://conta.crommos.com/auth/aceitar-convite?token=tok-7',
+      'https://app.crommos.com/aceitar-convite?token=tok-7',
     );
     expect(corpo(0)).toContain('Clínica Sol');
     expect(corpo(1)).toContain('uma clínica');

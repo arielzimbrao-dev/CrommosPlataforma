@@ -28,14 +28,17 @@ import {
   EscolherClinica,
   PessoaView,
   SessaoEmitida,
+  VerificacaoToken,
 } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { IsPublic } from './decorators/is-public.decorator';
 import { LoginDto } from './dtos/login.dto';
 import {
+  AceitarConviteDto,
   ForgotPasswordDto,
   ResetPasswordDto,
   TrocarSenhaDto,
+  VerificarTokenDto,
 } from './dtos/senha.dtos';
 
 export interface SessaoResponse {
@@ -158,18 +161,35 @@ export class AuthController {
   }
 
   /**
-   * QA-004: link do e-mail de convite de quem já tem conta — aceita e
-   * redireciona ao login do web (`conviteAceito=1|0`).
+   * Link antigo do e-mail de convite (QA-004): não aceita mais sozinho (um
+   * leitor de links aceitaria). Só leva à página do front, que tem o botão.
    */
   @Throttle({ default: { ttl: HORA, limit: 20 } })
   @IsPublic()
   @Get('aceitar-convite')
   @Redirect()
-  async aceitarConvite(
-    @Query('token') token?: string,
-  ): Promise<{ url: string }> {
-    const ok = token ? await this.auth.aceitarConvite(token) : false;
-    return { url: `${urlDoFrontend()}/login?conviteAceito=${ok ? 1 : 0}` };
+  redirecionarAceite(@Query('token') token?: string): { url: string } {
+    const q = token ? `?token=${encodeURIComponent(token)}` : '';
+    return { url: `${urlDoFrontend()}/aceitar-convite${q}` };
+  }
+
+  /** Aceite do convite pelo botão da página do front. */
+  @Throttle({ default: { ttl: HORA, limit: 20 } })
+  @IsPublic()
+  @Post('aceitar-convite')
+  @HttpCode(HttpStatus.OK)
+  aceitarConvite(
+    @Body() dto: AceitarConviteDto,
+  ): Promise<{ clinicaNome: string | null }> {
+    return this.auth.aceitarConvite(dto.token);
+  }
+
+  /** A página do link do e-mail valida o token ao abrir (sem consumi-lo). */
+  @Throttle({ default: { ttl: HORA, limit: 20 } })
+  @IsPublic()
+  @Get('verificar-token')
+  verificarToken(@Query() q: VerificarTokenDto): Promise<VerificacaoToken> {
+    return this.auth.verificarToken(q.tipo, q.token);
   }
 
   @Throttle({ default: { ttl: HORA, limit: 20 } })

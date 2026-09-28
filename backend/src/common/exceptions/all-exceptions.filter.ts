@@ -55,6 +55,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     let status: number = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: unknown = 'Erro interno do servidor';
+    let code: unknown;
     const conflito = mensagemConflito(exception);
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -68,6 +69,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
           : corpo;
       // QA-007: mensagens padrão da validação (inglês) → pt-BR.
       if (status === 400) message = traduzirValidacao(message);
+      // Código de erro de negócio (ex.: CONVITE_JA_ACEITO) para o front decidir.
+      if (typeof corpo === 'object' && corpo !== null && 'code' in corpo) {
+        code = (corpo as { code?: unknown }).code;
+      }
     } else if (conflito) {
       status = HttpStatus.CONFLICT;
       message = conflito;
@@ -84,6 +89,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
       path: request.url,
       message,
+      ...(code === undefined ? {} : { code }),
     });
   }
 }

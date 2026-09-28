@@ -66,8 +66,12 @@ npm ci && npm run start:dev
 - **Convite:** todo acesso convidado nasce `convite_pendente` (fora do login) e sai e-mail. Pessoa
   sem senha (nova, ou só convites pendentes) → token de 7 dias na pessoa (o link anterior deixa de
   valer); define a senha em `POST /auth/reset-password` (aceita os convites sem `convite_hash`).
-  Quem já tem senha → token de 7 dias no acesso (`convite_hash`), aceite em
-  `GET /auth/aceitar-convite`. A resposta é igual nos dois casos (QA-004).
+  Quem já tem senha → token de 7 dias no acesso (`convite_hash`); o e-mail leva à página do front
+  (`/aceitar-convite`), que aceita por botão em `POST /auth/aceitar-convite` (o `GET` antigo só
+  redireciona: leitor de links não aceita sozinho). O hash fica depois do aceite, para o link
+  reaberto responder "já aceito". A resposta do convite é igual nos dois casos (QA-004).
+- **Links de e-mail:** `GET /auth/verificar-token` diz se o token vale (sem consumir) para a página
+  avisar ao abrir: e-mail, nome da clínica do convite, ou `motivo` (`expirado`/`usado`/`invalido`).
 - **Billing:** mesmas regras do Clinic (pró-rata em `billing/pro-rata.ts`, não duplicar; redução abate
   pendentes antes de virar crédito; fatura pendente não bloqueia). Lock da renovação com o **mesmo
   nome** do Clinic (`billing-renovacao`) para as duas APIs não renovarem juntas na transição.

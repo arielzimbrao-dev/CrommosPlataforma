@@ -156,18 +156,14 @@ describeDb('API interna de acessos (integração)', () => {
     expect(semTenant.body.acesso.tenantId).toBe(T2);
 
     const token = ultimo(mail.sendConviteAceite, 2);
-    const ok = await request(app.getHttpServer())
-      .get(`/auth/aceitar-convite?token=${token}`)
-      .expect(302);
-    expect(ok.headers.location).toMatch(/\/login\?conviteAceito=1$/);
-    const deNovo = await request(app.getHttpServer())
-      .get(`/auth/aceitar-convite?token=${token}`)
-      .expect(302);
-    expect(deNovo.headers.location).toMatch(/conviteAceito=0$/);
-    const sem = await request(app.getHttpServer())
-      .get('/auth/aceitar-convite')
-      .expect(302);
-    expect(sem.headers.location).toMatch(/conviteAceito=0$/);
+    await request(app.getHttpServer())
+      .post('/auth/aceitar-convite')
+      .send({ token })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/auth/aceitar-convite')
+      .send({ token })
+      .expect(409);
     const l = await login('outro@exemplo.com', T1).expect(200);
     expect(l.body.acesso).toEqual({
       produto: 'clinic',
@@ -271,8 +267,9 @@ describeDb('API interna de acessos (integração)', () => {
     await criarAcesso(ds, { usuarioId: p.id, tenantId: T2 });
     const aceitar = (token: string) =>
       request(app.getHttpServer())
-        .get(`/auth/aceitar-convite?token=${token}`)
-        .expect(302);
+        .post('/auth/aceitar-convite')
+        .send({ token })
+        .then((r) => r.status);
     const res = await interno('post', '/acessos')
       .send({
         tenantId: T_SEM,
@@ -288,9 +285,7 @@ describeDb('API interna de acessos (integração)', () => {
     const segundo = ultimo(mail.sendConviteAceite, 2);
     expect(segundo).not.toBe(primeiro);
     expect(mail.sendConvite).not.toHaveBeenCalled();
-    expect((await aceitar(primeiro)).headers.location).toMatch(
-      /conviteAceito=0$/,
-    );
+    expect(await aceitar(primeiro)).toBe(400);
 
     // Redefinir a senha não aceita o convite de quem já tinha senha.
     await request(app.getHttpServer())
@@ -310,9 +305,7 @@ describeDb('API interna de acessos (integração)', () => {
     await interno('patch', '/acessos')
       .send({ tenantId: T_SEM, usuarioId: p.id, ativo: false })
       .expect(200);
-    expect((await aceitar(segundo)).headers.location).toMatch(
-      /conviteAceito=0$/,
-    );
+    expect(await aceitar(segundo)).toBe(400);
     await interno('patch', '/acessos')
       .send({ tenantId: T_SEM, usuarioId: p.id, ativo: true })
       .expect(200);
@@ -322,15 +315,11 @@ describeDb('API interna de acessos (integração)', () => {
         WHERE usuario_id = $1 AND tenant_id = $2`,
       [p.id, T_SEM],
     );
-    expect((await aceitar(segundo)).headers.location).toMatch(
-      /conviteAceito=0$/,
-    );
+    expect(await aceitar(segundo)).toBe(400);
     await interno('post', '/acessos/reenviar-convite')
       .send({ tenantId: T_SEM, usuarioId: p.id })
       .expect(204);
-    expect(
-      (await aceitar(ultimo(mail.sendConviteAceite, 2))).headers.location,
-    ).toMatch(/conviteAceito=1$/);
+    expect(await aceitar(ultimo(mail.sendConviteAceite, 2))).toBe(200);
     await login('aceite@exemplo.com', T_SEM, 'nova-senha-9').expect(200);
     const r = await interno('post', '/acessos/reenviar-convite')
       .send({ tenantId: T_SEM, usuarioId: p.id })

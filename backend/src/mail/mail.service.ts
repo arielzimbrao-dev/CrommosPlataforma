@@ -62,8 +62,9 @@ export class MailService {
   }
 
   /**
-   * QA-004: convite para quem **já tem conta**. O link aponta para a API
-   * (`GET /auth/aceitar-convite`), que aceita e redireciona ao login.
+   * QA-004: convite para quem **já tem conta**. O link aponta para a página
+   * do front (`/aceitar-convite`), que confere o token e aceita pelo botão
+   * (`POST /auth/aceitar-convite`).
    */
   sendConviteAceite(
     email: string,
@@ -73,7 +74,7 @@ export class MailService {
     clinica: string | null,
   ): Promise<void> {
     const sistema = NOME_PRODUTO[produto];
-    const link = `${urlDaApi()}/auth/aceitar-convite?token=${token}`;
+    const link = `${urlDoFrontend()}/aceitar-convite?token=${token}`;
     return this.enviar(email, `Convite para o ${sistema}`, link, [
       `Olá, ${nome}!`,
       `Você foi convidado(a) para acessar ${clinica ?? 'uma clínica'} no ${sistema}.`,

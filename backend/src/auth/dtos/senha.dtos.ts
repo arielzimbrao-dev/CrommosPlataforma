@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsString, MaxLength, MinLength } from 'class-validator';
 import { SenhaForte } from './senha-forte.decorator';
 
 export class ForgotPasswordDto {
@@ -26,4 +26,31 @@ export class TrocarSenhaDto {
 
   @SenhaForte()
   novaSenha!: string;
+}
+
+/** Tipos de link de e-mail que a página do front valida ao abrir. */
+export const TIPOS_TOKEN = [
+  'definir-senha',
+  'redefinir-senha',
+  'aceitar-convite',
+] as const;
+export type TipoToken = (typeof TIPOS_TOKEN)[number];
+
+/** `GET /auth/verificar-token?tipo=…&token=…`. */
+export class VerificarTokenDto {
+  @IsIn(TIPOS_TOKEN)
+  tipo!: TipoToken;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  token!: string;
+}
+
+/** `POST /auth/aceitar-convite`: token do link do e-mail de convite. */
+export class AceitarConviteDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  token!: string;
 }
