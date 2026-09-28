@@ -144,7 +144,7 @@ export class AuthService {
       where: { email },
       select: { id: true, email: true, nome: true, passwordHash: true },
     });
-    const invalido = new UnauthorizedException('Credenciais inválidas.');
+    const invalido = new UnauthorizedException('E-mail ou senha incorretos.');
     const ok = await conferirSenha(
       dto.password,
       usuario?.passwordHash ?? HASH_FALSO,
