@@ -61,7 +61,10 @@ const REGRAS: [RegExp, string][] = [
   ],
 ];
 
-export function traduzirMensagem(msg: string): string {
+export function traduzirMensagem(original: string): string {
+  // QA-180: campo aninhado prefixa o caminho ("adicionar.") até a mensagem
+  // própria do DTO (maiúscula); a padrão (minúscula) mantém o campo.
+  const msg = original.replace(/^(?:\w+\.)+(?=\p{Lu})/u, '');
   // `each: true` prefixa "each value in <campo>".
   const cada = /^each value in /.exec(msg);
   const base = cada ? msg.slice(cada[0].length) : msg;

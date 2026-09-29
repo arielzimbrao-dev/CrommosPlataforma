@@ -90,6 +90,15 @@ describe('traduzirValidacao (QA-007: 400 do ValidationPipe em pt-BR)', () => {
     );
   });
 
+  it('QA-180: mensagem própria de campo aninhado sai sem o caminho ("adicionar.")', () => {
+    expect(traduzirMensagem('adicionar.Papel inválido.')).toBe(
+      'Papel inválido.',
+    );
+    expect(traduzirMensagem('adicionar.papel must be a string')).toBe(
+      'adicionar.papel deve ser um texto.',
+    );
+  });
+
   it('traduz string e lista; outros tipos passam', () => {
     expect(traduzirValidacao(['email must be an email', 'ok'])).toEqual([
       'email deve ser um e-mail válido.',

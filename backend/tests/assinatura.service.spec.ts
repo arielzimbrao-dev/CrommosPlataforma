@@ -261,6 +261,63 @@ describe('AssinaturaService.simular', () => {
     );
   });
 
+  it('QA-167: remover e trocar o papel (remover + adicionar) de uma pessoa', async () => {
+    const { svc } = make(assinatura(), [
+      ...equipe(4),
+      { papel: 'recepcao', clinico: false },
+    ]);
+    const modulos = [ModuleCode.Agenda, ModuleCode.Financeiro];
+    // hoje: Agenda 5 × 25,50 + Financeiro 4 × 29,75 = 246,50
+    const sem = await svc.simular(
+      ATOR,
+      { modulos, plano: PlanoPeriodo.Mensal, remover: { papel: 'recepcao' } },
+      HOJE,
+    );
+    expect(sem).toMatchObject({ valor: 221, numeroUsuarios: 4 });
+    // recepção → financeiro: sai da Agenda, entra no Financeiro
+    const troca = await svc.simular(
+      ATOR,
+      {
+        modulos,
+        plano: PlanoPeriodo.Mensal,
+        remover: { papel: 'recepcao' },
+        adicionar: { papel: 'financeiro' },
+      },
+      HOJE,
+    );
+    expect(troca).toMatchObject({ valor: 250.75, numeroUsuarios: 5 });
+    // prefere quem tem o mesmo vínculo clínico; sem ninguém do papel, nada muda
+    const nada = await svc.simular(
+      ATOR,
+      { modulos, plano: PlanoPeriodo.Mensal, remover: { papel: 'gestor' } },
+      HOJE,
+    );
+    expect(nada.valor).toBe(246.5);
+  });
+
+  it('QA-157: simular mostra o ajuste da virada de faixa (10 → 11 pessoas)', async () => {
+    const { svc } = make(assinatura(), equipe(10, 'recepcao', false));
+    const r = await svc.simular(
+      ATOR,
+      {
+        modulos: [ModuleCode.Agenda],
+        plano: PlanoPeriodo.Mensal,
+        adicionar: { papel: 'recepcao' },
+      },
+      HOJE,
+    );
+    expect(r).toMatchObject({
+      valorAtual: 229.5,
+      valor: 229.5,
+      ajusteFaixa: 5.1,
+    });
+    const view = await make(
+      assinatura(),
+      equipe(11, 'recepcao', false),
+    ).svc.getCurrent(ATOR, HOJE);
+    expect(view).toMatchObject({ valor: 229.5, ajusteFaixa: 5.1 });
+  });
+
   it('N-02: redução mostra quanto abate da fatura pendente e quanto vira crédito', async () => {
     const { svc, faturas } = make(assinatura({ modulosAtivos: AGENDA_PRONT }));
     faturas.find.mockResolvedValue([{ valorBruto: 50, creditoAplicado: 0 }]);

@@ -44,6 +44,13 @@ export interface ModuleInfo {
 }
 
 // Papéis do Clinic (frontend/src/nav.ts de lá).
+export const PAPEIS = [
+  'admin',
+  'gestor',
+  'recepcao',
+  'profissional',
+  'financeiro',
+] as const;
 const AGENDA = ['admin', 'gestor', 'recepcao', 'profissional'];
 const CLINICO = ['admin', 'profissional'];
 const GESTAO_FINANCEIRA = ['admin', 'gestor', 'financeiro'];
@@ -189,9 +196,47 @@ export const itensDe = (a: Assentos): ItemAssinatura[] =>
     preco: precoNaFaixa(m.code, a.pessoas),
   }));
 
+/** Σ (preço na faixa de `n` pessoas × assentos), em centavos. */
+const mensalCentavos = (
+  modulos: ModuleCode[],
+  assentos: Assentos,
+  n: number,
+): number =>
+  modulos.reduce(
+    (soma, c) =>
+      soma +
+      Math.round(precoNaFaixa(c, n) * 100) * (assentos.porModulo[c] ?? 0),
+    0,
+  );
+
+/**
+ * QA-157 — **proteção na virada de faixa** (decisão do dono, docs/03): ao
+ * passar para uma faixa maior, a mensalidade não fica abaixo do que a equipe
+ * pagaria no limite da faixa anterior (5, 10 ou 30 pessoas):
+ *   piso = mensal(assentos, faixa anterior) × limite anterior / n
+ * Devolve quanto falta para o piso (R$, antes do desconto do plano); 0 dentro
+ * da faixa. ponytail: o piso usa o custo médio da equipe — somar alguém que
+ * custa menos que a média logo depois da virada ainda pode baixar uns reais
+ * (monotonia total mudaria os perfis do doc).
+ */
+export function ajusteVirada(
+  modulos: ModuleCode[],
+  assentos: Assentos,
+): number {
+  const n = assentos.pessoas;
+  const anterior = [...FAIXAS]
+    .reverse()
+    .find((f) => f.ate !== null && f.ate < n);
+  if (!anterior?.ate) return 0;
+  const piso = Math.round(
+    (mensalCentavos(modulos, assentos, anterior.ate) * anterior.ate) / n,
+  );
+  return Math.max(0, piso - mensalCentavos(modulos, assentos, n)) / 100;
+}
+
 /**
  * Valor final da assinatura (R$/mês):
- *   mensal = Σ (preço do módulo na faixa × assentos do módulo)
+ *   mensal = Σ (preço do módulo na faixa × assentos do módulo) + ajuste da virada
  *   final  = mensal × (1 − desconto do plano)
  * A faixa é pelo total de pessoas da clínica.
  */
@@ -200,12 +245,8 @@ export function calcularValor(
   assentos: Assentos,
   plano: PlanoPeriodo,
 ): number {
-  const mensal = modulos.reduce(
-    (soma, c) =>
-      soma +
-      Math.round(precoNaFaixa(c, assentos.pessoas) * 100) *
-        (assentos.porModulo[c] ?? 0),
-    0,
-  );
+  const mensal =
+    mensalCentavos(modulos, assentos, assentos.pessoas) +
+    Math.round(ajusteVirada(modulos, assentos) * 100);
   return Math.round(mensal * (1 - DESCONTO_PLANO[plano])) / 100;
 }

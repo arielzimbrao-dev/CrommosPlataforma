@@ -149,10 +149,15 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
   módulo na faixa × pessoas com acesso ao módulo) × (1 − desconto do plano). Pessoas = acessos
   `ativo` (convite pendente conta); quem ocupa assento em cada módulo vem do papel (espelha o menu do
   Clinic) e, nos clínicos (Prontuário, Exames, Telemedicina), de `acessos.clinico`. Faixa pelo
-  total de pessoas (1–5, 6–10 −10%, 11–30 −20%, 31+ −30%). Mudança de acesso → pró-rata na hora.
-  `GET /assinatura` traz `itens: [{ code, pessoas, preco }]`, `faixa` e `faixas`; `simular` aceita
-  `adicionar: { papel, clinico? }` (impacto de convidar/ativar) e devolve `valorAtual`, `valor`,
-  `numeroUsuarios`, `itens`, `faixa`. `numeroUsuarios` no corpo do `PATCH`/`simular` é ignorado
+  total de pessoas (1–5, 6–10 −10%, 11–30 −20%, 31+ −30%). **Proteção na virada de faixa
+  (QA-157):** acima de 5/10/30 pessoas, o mensal não fica abaixo de `mensal na faixa anterior ×
+  limite anterior / pessoas` (antes do desconto do plano); a diferença sai em `ajusteFaixa` (R$, 0 =
+  nenhum). Mudança de acesso → pró-rata na hora.
+  `GET /assinatura` traz `itens: [{ code, pessoas, preco }]`, `faixa`, `faixas` e `ajusteFaixa`;
+  `simular` aceita `adicionar: { papel, clinico? }` (convidar/ativar) e `remover: { papel,
+  clinico? }` (desativar; trocar o papel = remover + adicionar — QA-167), com `papel` entre admin,
+  gestor, recepcao, profissional e financeiro (senão 400 — QA-180), e devolve `valorAtual`, `valor`,
+  `ajusteFaixa`, `numeroUsuarios`, `itens`, `faixa`. `numeroUsuarios` no corpo do `PATCH`/`simular` é ignorado
   (compatibilidade). `assinaturas.numero_usuarios` = pessoas cobradas (informativo).
 - **Refresh:** rotação a cada chamada. Reapresentar um refresh rotacionado há **menos de 10 s**
   (várias abas renovando juntas, B1) emite um par novo, sem revogar nada. Depois disso,
