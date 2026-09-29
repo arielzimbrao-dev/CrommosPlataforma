@@ -45,6 +45,9 @@ export interface ExportacaoConta {
     tenantId: string | null;
     action: string;
     resource: string;
+    /** Registros de acesso (L-24): IP e navegador. */
+    ip: string | null;
+    navegador: string | null;
     em: Date;
   }[];
 }
@@ -91,8 +94,8 @@ export class ContaService {
         [usuarioId],
       ),
       this.ds.query<ExportacaoConta['auditoria']>(
-        `SELECT produto, tenant_id AS "tenantId", action, resource,
-                created_at AS em
+        `SELECT produto, tenant_id AS "tenantId", action, resource, ip,
+                user_agent AS navegador, created_at AS em
            FROM crommos.auditoria WHERE usuario_id = $1 ORDER BY created_at`,
         [usuarioId],
       ),

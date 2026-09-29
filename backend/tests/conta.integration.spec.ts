@@ -67,6 +67,10 @@ describeDb('Conta (LGPD, integração)', () => {
     expect(r.body.auditoria.map((a: { action: string }) => a.action)).toContain(
       'login',
     );
+    // L-24: o registro de acesso vai com o IP na exportação.
+    expect(
+      r.body.auditoria.find((a: { action: string }) => a.action === 'login').ip,
+    ).toBeTruthy();
     await request(app.getHttpServer()).get('/conta/dados').expect(401);
   });
 

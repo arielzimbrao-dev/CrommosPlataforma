@@ -1,4 +1,13 @@
-import { IsEmail, IsIn, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+import { PaginacaoDto } from '../../common/paginacao';
 import { SenhaForte } from './senha-forte.decorator';
 
 export class ForgotPasswordDto {
@@ -53,4 +62,11 @@ export class AceitarConviteDto {
   @MinLength(1)
   @MaxLength(128)
   token!: string;
+}
+
+/** `GET /auth/acessos` (L-24): paginação e, opcional, uma pessoa. */
+export class ListarAcessosDto extends PaginacaoDto {
+  @IsOptional()
+  @IsUUID()
+  usuarioId?: string;
 }

@@ -4,7 +4,6 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  Ip,
   Post,
   Query,
   Redirect,
@@ -16,6 +15,8 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import type { ITokenPayload } from '../common/interfaces/token-payload.interface';
+import { AuditService, type ContextoAcesso } from '../audit/audit.service';
+import { paginar } from '../common/paginacao';
 import { urlDoFrontend } from '../mail/mail.service';
 import {
   clearRefreshCookie,
@@ -31,10 +32,12 @@ import {
   VerificacaoToken,
 } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { ExigeAcesso, PAPEL_ADMIN } from './decorators/exige-acesso.decorator';
 import { IsPublic } from './decorators/is-public.decorator';
 import { LoginDto } from './dtos/login.dto';
 import {
   AceitarConviteDto,
+  ListarAcessosDto,
   ForgotPasswordDto,
   ResetPasswordDto,
   TrocarSenhaDto,
@@ -49,6 +52,12 @@ export interface SessaoResponse {
 
 const MINUTO = 60_000;
 const HORA = 3_600_000;
+
+/** L-24: IP (`trust proxy` conforme TRUST_PROXY, main.ts) e navegador. */
+export const contextoDe = (req: Request): ContextoAcesso => ({
+  ip: req.ip,
+  userAgent: req.headers['user-agent'],
+});
 
 const cookieDeRefresh = (req: Request): string | undefined =>
   (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE];
@@ -72,7 +81,10 @@ export function responderSessao(
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly audit: AuditService,
+  ) {}
 
   // Backstop por IP (todas as tentativas): generoso, para a clínica atrás de
   // um NAT; as falhas são contadas no AuthService (IP + e-mail).
@@ -82,10 +94,10 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() dto: LoginDto,
-    @Ip() ip: string,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<SessaoResponse | EscolherClinica> {
-    const r = await this.auth.login(dto, ip);
+    const r = await this.auth.login(dto, contextoDe(req));
     // Mais de uma clínica: sem sessão; o cliente refaz com o `tenantId`.
     return 'escolherClinica' in r ? r : responderSessao(res, r);
   }
@@ -103,7 +115,10 @@ export class AuthController {
   ): Promise<SessaoResponse> {
     const atual = cookieDeRefresh(req);
     if (!atual) throw new UnauthorizedException('Refresh token ausente.');
-    return responderSessao(res, await this.auth.refresh(atual));
+    return responderSessao(
+      res,
+      await this.auth.refresh(atual, contextoDe(req)),
+    );
   }
 
   /** Público: revoga pelo cookie mesmo com o access expirado; nunca 401. */
@@ -114,7 +129,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
-    await this.auth.logout(cookieDeRefresh(req));
+    await this.auth.logout(cookieDeRefresh(req), contextoDe(req));
     clearRefreshCookie(res);
   }
 
@@ -143,11 +158,17 @@ export class AuthController {
   async trocarSenha(
     @CurrentUser() user: ITokenPayload,
     @Body() dto: TrocarSenhaDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<SessaoResponse> {
     return responderSessao(
       res,
-      await this.auth.trocarSenha(user, dto.senhaAtual, dto.novaSenha),
+      await this.auth.trocarSenha(
+        user,
+        dto.senhaAtual,
+        dto.novaSenha,
+        contextoDe(req),
+      ),
     );
   }
 
@@ -193,6 +214,20 @@ export class AuthController {
   @Get('verificar-token')
   verificarToken(@Query() q: VerificarTokenDto): Promise<VerificacaoToken> {
     return this.auth.verificarToken(q.tipo, q.token);
+  }
+
+  /**
+   * L-24: acessos da equipe (login, falhas, refresh, senha, logout) dos
+   * últimos 90 dias, com IP e navegador. Só o admin da clínica.
+   */
+  @ApiBearerAuth()
+  @ExigeAcesso(PAPEL_ADMIN)
+  @Get('acessos')
+  acessos(@CurrentUser() user: ITokenPayload, @Query() q: ListarAcessosDto) {
+    return this.audit.listarAcessos(user.produto, user.tenantId, {
+      usuarioId: q.usuarioId,
+      ...paginar(q),
+    });
   }
 
   @Throttle({ default: { ttl: HORA, limit: 20 } })
