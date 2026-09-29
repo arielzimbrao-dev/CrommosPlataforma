@@ -86,11 +86,18 @@ describeDb('Billing (integração)', () => {
         modulosAtivos: ['agenda'],
         numeroUsuarios: 3,
         valor: 51,
-        faixa: { de: 1, ate: 5, desconto: 0 },
+        teleconsultas: null,
       });
+      expect(a.body).not.toHaveProperty('faixa');
       expect(
         a.body.itens.find((i: { code: string }) => i.code === 'financeiro'),
-      ).toEqual({ code: 'financeiro', pessoas: 3, preco: 29.75 });
+      ).toEqual({
+        code: 'financeiro',
+        pessoas: 3,
+        preco: 29.75,
+        degraus: [{ qtd: 3, preco: 29.75 }],
+        subtotal: 89.25,
+      });
       await http().get('/assinatura/faturas').set(como(papel)).expect(200);
       await http()
         .post('/assinatura/simular')
@@ -185,7 +192,7 @@ describeDb('Billing (integração)', () => {
       .expect(201);
     expect(sim.body).toMatchObject({
       valorAtual: 76.5,
-      valor: 102,
+      valor: 98.18, // 4º assento da Agenda: 21,68
       numeroUsuarios: 5,
     });
     await http()

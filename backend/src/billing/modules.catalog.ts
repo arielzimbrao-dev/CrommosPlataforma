@@ -4,7 +4,9 @@
  *
  * Modelo **assento por módulo**: cada módulo contratado cobra pelas pessoas
  * que têm acesso a ele (derivadas dos acessos ativos e dos papéis — a clínica
- * só escolhe os módulos). A faixa de porte vem do total de pessoas da clínica.
+ * só escolhe os módulos). Desconto em **escada dentro de cada módulo**: o
+ * k-ésimo assento paga preço × fator do degrau (`ESCADA`). Somar uma pessoa só
+ * acrescenta o preço do assento dela — o valor nunca cai ao crescer.
  *
  * Por ora um catálogo só (o do Clinic, o único produto em operação); o
  * catálogo próprio de Odonto e Vet é _a definir_.
@@ -30,10 +32,8 @@ export enum PlanoPeriodo {
 export interface ModuleInfo {
   code: ModuleCode;
   nome: string;
-  /** Preço por pessoa com acesso (assento)/mês na faixa base (1–5 pessoas). R$. */
+  /** Preço cheio por pessoa com acesso (assento)/mês — do 1º ao 3º. R$. */
   precoPorUsuario: number;
-  /** Preço ainda não definido na precificação (a UI mostra "a definir"). */
-  precoADefinir?: true;
   /**
    * Quem ocupa assento (espelha o menu e os `@Roles` do Clinic): papéis com
    * acesso ao módulo; ausente = todas as pessoas da clínica.
@@ -88,34 +88,29 @@ export const MODULES: ModuleInfo[] = [
     nome: 'Múltiplas unidades',
     precoPorUsuario: 12.75,
   },
-  // "A definir" (0 por ora): Convênio, Estoque, Fiscal e Telemedicina não
-  // têm preço na precificação — a UI mostra "a definir", não "grátis".
   {
     code: ModuleCode.Convenio,
     nome: 'Convênio',
-    precoPorUsuario: 0,
-    precoADefinir: true,
+    precoPorUsuario: 34,
     papeis: GESTAO_FINANCEIRA,
   },
   {
     code: ModuleCode.Estoque,
     nome: 'Estoque',
-    precoPorUsuario: 0,
-    precoADefinir: true,
+    precoPorUsuario: 8.5,
     papeis: [...AGENDA, 'financeiro'],
   },
   {
     code: ModuleCode.Fiscal,
     nome: 'Fiscal (NFS-e, Receita Saúde e DMED)',
-    precoPorUsuario: 0,
-    precoADefinir: true,
+    precoPorUsuario: 25.5,
     papeis: GESTAO_FINANCEIRA,
   },
+  // Franquia de teleconsultas por assento (FRANQUIA_TELECONSULTAS).
   {
     code: ModuleCode.Telemedicina,
     nome: 'Telemedicina',
-    precoPorUsuario: 0,
-    precoADefinir: true,
+    precoPorUsuario: 42.5,
     papeis: CLINICO,
     clinico: true,
   },
@@ -128,32 +123,67 @@ export const DESCONTO_PLANO: Record<PlanoPeriodo, number> = {
 };
 
 /**
- * Faixas de porte pelo **total** de pessoas da clínica (planilha: 30 → 27 →
- * 24 → 21): desconto em % sobre o preço base. `ate` null = sem teto.
+ * Escada por módulo (docs/03-precificacao.md): o k-ésimo assento do módulo
+ * paga o preço cheio × `fator` (%). `ate` null = sem teto.
  */
-export const FAIXAS = [
-  { de: 1, ate: 5, desconto: 0 },
-  { de: 6, ate: 10, desconto: 10 },
-  { de: 11, ate: 30, desconto: 20 },
-  { de: 31, ate: null, desconto: 30 },
+export const ESCADA = [
+  { de: 1, ate: 3, fator: 100 },
+  { de: 4, ate: 10, fator: 85 },
+  { de: 11, ate: 30, fator: 75 },
+  { de: 31, ate: null, fator: 65 },
 ] as const;
 
-export type Faixa = (typeof FAIXAS)[number];
+/** Telemedicina: teleconsultas incluídas por assento, por mês do ciclo. */
+export const FRANQUIA_TELECONSULTAS = 20;
+/** R$ por teleconsulta além da franquia (cobrada na fatura seguinte). */
+export const PRECO_TELECONSULTA_EXCEDENTE = 2;
 
 export const MODULE_CODES = MODULES.map((m) => m.code);
 
-export const faixaDe = (pessoas: number): Faixa =>
-  FAIXAS.find((f) => f.ate === null || pessoas <= f.ate) ?? FAIXAS[0];
+const precoCheio = (code: ModuleCode) =>
+  MODULES.find((m) => m.code === code)?.precoPorUsuario ?? 0;
 
-/** Preço do módulo por assento na faixa (R$, arredondado ao centavo). */
-export function precoNaFaixa(code: ModuleCode, pessoas: number): number {
-  const base = MODULES.find((m) => m.code === code)?.precoPorUsuario ?? 0;
-  // Em centavos inteiros: 29,75 × 90% = 26,775 → 26,78.
-  const cent = Math.round(
-    (Math.round(base * 100) * (100 - faixaDe(pessoas).desconto)) / 100,
-  );
-  return cent / 100;
+/** Centavos de um assento no degrau (arredondado ao centavo, meio para cima). */
+const assentoCent = (code: ModuleCode, fator: number) =>
+  Math.round((Math.round(precoCheio(code) * 100) * fator) / 100);
+
+/** Preço do k-ésimo assento do módulo (R$): 29,75 × 0,85 = 25,2875 → 25,29. */
+export function precoAssento(code: ModuleCode, k: number): number {
+  const d = ESCADA.find((e) => e.ate === null || k <= e.ate) ?? ESCADA[0];
+  return assentoCent(code, d.fator) / 100;
 }
+
+export interface Degrau {
+  /** Assentos neste degrau. */
+  qtd: number;
+  /** Preço de cada um (R$/mês). */
+  preco: number;
+}
+
+/** `n` assentos do módulo repartidos na escada (sem degraus vazios). */
+export const degrausDe = (code: ModuleCode, n: number): Degrau[] =>
+  ESCADA.map((e) => ({
+    qtd: Math.max(0, Math.min(n, e.ate ?? n) - e.de + 1),
+    preco: assentoCent(code, e.fator) / 100,
+  })).filter((d) => d.qtd > 0);
+
+const subtotalCent = (code: ModuleCode, n: number) =>
+  degrausDe(code, n).reduce((s, d) => s + d.qtd * Math.round(d.preco * 100), 0);
+
+/** Σ dos assentos do módulo (R$/mês, antes do desconto do plano). */
+export const subtotalModulo = (code: ModuleCode, n: number): number =>
+  subtotalCent(code, n) / 100;
+
+/**
+ * Teleconsultas além da franquia do ciclo: 20 × assentos de Telemedicina ×
+ * meses do ciclo (semestral 6, anual 12).
+ */
+export const teleconsultasExcedentes = (
+  realizadas: number,
+  assentos: number,
+  meses = 1,
+): number =>
+  Math.max(0, realizadas - FRANQUIA_TELECONSULTAS * assentos * meses);
 
 /** Pessoa com acesso ativo (convite pendente incluso): o que conta assento. */
 export interface PessoaAcesso {
@@ -161,7 +191,7 @@ export interface PessoaAcesso {
   clinico: boolean;
 }
 
-/** Assentos derivados: total de pessoas (faixa) e pessoas por módulo. */
+/** Assentos derivados: total de pessoas e pessoas por módulo. */
 export interface Assentos {
   pessoas: number;
   porModulo: Record<ModuleCode, number>;
@@ -184,69 +214,40 @@ export interface ItemAssinatura {
   code: ModuleCode;
   /** Pessoas com acesso ao módulo (assentos). */
   pessoas: number;
-  /** Preço por assento na faixa atual (R$/mês). */
+  /** Preço cheio por assento (1º ao 3º), R$/mês. */
   preco: number;
+  /** Assentos por degrau: "3 × R$ 25,50 + 2 × R$ 21,68". */
+  degraus: Degrau[];
+  /** Σ dos assentos (R$/mês, antes do plano). */
+  subtotal: number;
 }
 
-/** Assentos e preço de cada módulo do catálogo (contratado ou não). */
+/** Assentos, escada e subtotal de cada módulo do catálogo (contratado ou não). */
 export const itensDe = (a: Assentos): ItemAssinatura[] =>
-  MODULES.map((m) => ({
-    code: m.code,
-    pessoas: a.porModulo[m.code] ?? 0,
-    preco: precoNaFaixa(m.code, a.pessoas),
-  }));
-
-/** Σ (preço na faixa de `n` pessoas × assentos), em centavos. */
-const mensalCentavos = (
-  modulos: ModuleCode[],
-  assentos: Assentos,
-  n: number,
-): number =>
-  modulos.reduce(
-    (soma, c) =>
-      soma +
-      Math.round(precoNaFaixa(c, n) * 100) * (assentos.porModulo[c] ?? 0),
-    0,
-  );
-
-/**
- * QA-157 — **proteção na virada de faixa** (decisão do dono, docs/03): ao
- * passar para uma faixa maior, a mensalidade não fica abaixo do que a equipe
- * pagaria no limite da faixa anterior (5, 10 ou 30 pessoas):
- *   piso = mensal(assentos, faixa anterior) × limite anterior / n
- * Devolve quanto falta para o piso (R$, antes do desconto do plano); 0 dentro
- * da faixa. ponytail: o piso usa o custo médio da equipe — somar alguém que
- * custa menos que a média logo depois da virada ainda pode baixar uns reais
- * (monotonia total mudaria os perfis do doc).
- */
-export function ajusteVirada(
-  modulos: ModuleCode[],
-  assentos: Assentos,
-): number {
-  const n = assentos.pessoas;
-  const anterior = [...FAIXAS]
-    .reverse()
-    .find((f) => f.ate !== null && f.ate < n);
-  if (!anterior?.ate) return 0;
-  const piso = Math.round(
-    (mensalCentavos(modulos, assentos, anterior.ate) * anterior.ate) / n,
-  );
-  return Math.max(0, piso - mensalCentavos(modulos, assentos, n)) / 100;
-}
+  MODULES.map((m) => {
+    const pessoas = a.porModulo[m.code] ?? 0;
+    return {
+      code: m.code,
+      pessoas,
+      preco: m.precoPorUsuario,
+      degraus: degrausDe(m.code, pessoas),
+      subtotal: subtotalModulo(m.code, pessoas),
+    };
+  });
 
 /**
  * Valor final da assinatura (R$/mês):
- *   mensal = Σ (preço do módulo na faixa × assentos do módulo) + ajuste da virada
+ *   mensal = Σ módulos contratados Σ assentos (preço cheio × fator do degrau)
  *   final  = mensal × (1 − desconto do plano)
- * A faixa é pelo total de pessoas da clínica.
  */
 export function calcularValor(
   modulos: ModuleCode[],
   assentos: Assentos,
   plano: PlanoPeriodo,
 ): number {
-  const mensal =
-    mensalCentavos(modulos, assentos, assentos.pessoas) +
-    Math.round(ajusteVirada(modulos, assentos) * 100);
+  const mensal = modulos.reduce(
+    (s, c) => s + subtotalCent(c, assentos.porModulo[c] ?? 0),
+    0,
+  );
   return Math.round(mensal * (1 - DESCONTO_PLANO[plano])) / 100;
 }

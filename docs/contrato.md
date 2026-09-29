@@ -105,6 +105,7 @@ constante; `404` sem chave configurada. O `produto` vem da chave, não do corpo.
 | `PATCH /interno/acessos` | `{ tenantId, usuarioId, papel?, ativo?, clinico? }` | `200 { usuarioId, produto, tenantId, papel, ativo, convitePendente, clinico }` — desativar revoga as sessões da pessoa no tenant; papel/ativo/`clinico` mudam os assentos (pró-rata: complementar ou crédito); `404` sem acesso. `clinico` = a pessoa está vinculada a um profissional de saúde no produto (o produto avisa ao vincular/desvincular) |
 | `POST /interno/acessos/reenviar-convite` | `{ tenantId, usuarioId }` | `204` (link novo do mesmo tipo: definir senha ou aceite); `409` `'Esta pessoa já aceitou o convite.'` |
 | `GET /interno/pessoas/:usuarioId` | — | `{ id, nome, email, emailConfirmado }`; `404` se a pessoa não tem acesso a nenhum tenant do produto |
+| `POST /interno/teleconsultas` | `{ tenantId, referencia }` | `204` — teleconsulta **concluída** no produto (franquia da Telemedicina). `referencia` = id do atendimento no produto (UUID): reenvio não conta duas vezes. Conta no ciclo pela data de chegada (Brasília) |
 
 ## API interna do produto (chamada pela plataforma)
 
@@ -145,19 +146,24 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
 - **`novo`** = a pessoa foi criada agora; **`convitePendente`** = ela ainda não tem senha (nova ou
   só com convites pendentes; o link anterior deixa de valer). Falha no envio → `201` com
   `emailEnviado: false` e o acesso gravado (o produto usa "reenviar convite").
-- **Assento por módulo (migration 10, substitui o limite de usuários):** valor = Σ (preço do
-  módulo na faixa × pessoas com acesso ao módulo) × (1 − desconto do plano). Pessoas = acessos
-  `ativo` (convite pendente conta); quem ocupa assento em cada módulo vem do papel (espelha o menu do
-  Clinic) e, nos clínicos (Prontuário, Exames, Telemedicina), de `acessos.clinico`. Faixa pelo
-  total de pessoas (1–5, 6–10 −10%, 11–30 −20%, 31+ −30%). **Proteção na virada de faixa
-  (QA-157):** acima de 5/10/30 pessoas, o mensal não fica abaixo de `mensal na faixa anterior ×
-  limite anterior / pessoas` (antes do desconto do plano); a diferença sai em `ajusteFaixa` (R$, 0 =
-  nenhum). Mudança de acesso → pró-rata na hora.
-  `GET /assinatura` traz `itens: [{ code, pessoas, preco }]`, `faixa`, `faixas` e `ajusteFaixa`;
+- **Assento por módulo (migration 10, substitui o limite de usuários):** valor = Σ módulos
+  contratados Σ assentos (preço cheio × fator do degrau) × (1 − desconto do plano). **Escada por
+  módulo** (substitui a faixa pelo total de pessoas e o `ajusteFaixa` do QA-157): o k-ésimo assento
+  do módulo paga 100% (1º–3º), 85% (4º–10º), 75% (11º–30º) ou 65% (31º+), cada assento arredondado
+  ao centavo — somar uma pessoa nunca reduz o valor. Pessoas = acessos `ativo` (convite pendente
+  conta); quem ocupa assento em cada módulo vem do papel (espelha o menu do Clinic) e, nos clínicos
+  (Prontuário, Exames, Telemedicina), de `acessos.clinico`. Mudança de acesso → pró-rata na hora.
+  `GET /assinatura` traz `itens: [{ code, pessoas, preco, degraus: [{ qtd, preco }], subtotal }]`
+  (`preco` = cheio), `escada` e `teleconsultas: { realizadas, incluidas } | null` (só com
+  Telemedicina: 20 por assento × meses do ciclo; o excedente, R$ 2,00 cada, entra na fatura da
+  renovação em `itens.teleconsultasExcedentes: { quantidade, valorUnitario, valor, realizadas,
+  incluidas }` — migration 11, `crommos.teleconsultas`; o ciclo do trial não cobra). **Assinaturas
+  existentes:** a fatura do ciclo em curso não é refeita; o valor pela escada vale na renovação (o
+  pró-rata de mudanças no meio do ciclo já compara antes × depois pela regra nova);
   `simular` aceita `adicionar: { papel, clinico? }` (convidar/ativar) e `remover: { papel,
   clinico? }` (desativar; trocar o papel = remover + adicionar — QA-167), com `papel` entre admin,
   gestor, recepcao, profissional e financeiro (senão 400 — QA-180), e devolve `valorAtual`, `valor`,
-  `ajusteFaixa`, `numeroUsuarios`, `itens`, `faixa`. `numeroUsuarios` no corpo do `PATCH`/`simular` é ignorado
+  `numeroUsuarios`, `itens`. `numeroUsuarios` no corpo do `PATCH`/`simular` é ignorado
   (compatibilidade). `assinaturas.numero_usuarios` = pessoas cobradas (informativo).
 - **Refresh:** rotação a cada chamada. Reapresentar um refresh rotacionado há **menos de 10 s**
   (várias abas renovando juntas, B1) emite um par novo, sem revogar nada. Depois disso,
@@ -203,6 +209,6 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
 - **E-mail:** Resend (API HTTP); sem `RESEND_API_KEY`, stub.
 - **Várias réplicas:** rate limit no Postgres (`crommos.rate_limit`), jobs com advisory lock,
   migrations com advisory lock, nada de estado em memória entre requisições.
-- **Estoque:** módulo no catálogo com preço _a definir_ (como Convênio).
+- **Preços:** os 9 módulos têm preço (docs/03-precificacao.md do workspace); nenhum _a definir_.
 - **Auditoria:** `crommos.auditoria (usuario_id, produto, tenant_id, action, resource, resource_id,
   created_at)` — login, logout, signup, senha, e-mail, acessos (ator = produto), assinatura, baixa.

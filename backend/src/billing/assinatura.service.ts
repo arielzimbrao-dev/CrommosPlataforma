@@ -21,19 +21,19 @@ import { SimularDto, UpdateAssinaturaDto } from './dtos/billing.dtos';
 import { Fatura } from './fatura.entity';
 import {
   Assentos,
-  FAIXAS,
-  Faixa,
+  ESCADA,
+  FRANQUIA_TELECONSULTAS,
   ItemAssinatura,
   MODULES,
   MODULE_CODES,
   ModuleCode,
+  PRECO_TELECONSULTA_EXCEDENTE,
   PessoaAcesso,
   PlanoPeriodo,
-  ajusteVirada,
   calcularValor,
   contarAssentos,
-  faixaDe,
   itensDe,
+  teleconsultasExcedentes,
 } from './modules.catalog';
 import {
   AjusteProRata,
@@ -43,6 +43,7 @@ import {
   calcularProRata,
   centavos,
   emTrial,
+  mesesEntre,
   renovarCiclo,
   somarDias,
 } from './pro-rata';
@@ -63,18 +64,17 @@ export interface Ator {
 
 export interface AssinaturaView {
   modulosAtivos: ModuleCode[];
-  /** Pessoas com acesso ativo (convites inclusos): define a faixa. */
+  /** Pessoas com acesso ativo (convites inclusos). */
   numeroUsuarios: number;
   plano: PlanoPeriodo;
   /** R$/mês (fórmula de docs/03-precificacao.md). */
   valor: number;
-  /** QA-157: ajuste da virada de faixa (R$/mês, antes do plano); 0 = nenhum. */
-  ajusteFaixa: number;
   catalogo: typeof MODULES;
-  /** Assentos (pessoas com acesso) e preço na faixa de cada módulo. */
+  /** Assentos, degraus da escada e subtotal de cada módulo. */
   itens: ItemAssinatura[];
-  faixa: Faixa;
-  faixas: typeof FAIXAS;
+  escada: typeof ESCADA;
+  /** Telemedicina contratada: teleconsultas do ciclo × franquia; senão null. */
+  teleconsultas: Teleconsultas | null;
   ciclo: { inicio: string; fim: string } | null;
   emTrialAte: string | null;
   emTrial: boolean;
@@ -85,6 +85,36 @@ export interface AssinaturaView {
   modoLeitura: MotivoLeitura | null;
   /** Fatura pendente mais antiga já vencida (aviso), ou `null`. */
   faturaVencida: FaturaVencida | null;
+}
+
+export interface Teleconsultas {
+  /** Realizadas (concluídas) no ciclo corrente. */
+  realizadas: number;
+  /** Franquia do ciclo: 20 × assentos de Telemedicina × meses do ciclo. */
+  incluidas: number;
+}
+
+/** Meses do ciclo para a franquia (o ciclo do trial, de dias, conta 1). */
+const mesesDoCiclo = (a: Assinatura) =>
+  Math.max(1, mesesEntre(a.cicloInicio, a.cicloFim));
+
+/** Teleconsultas realizadas no período [de, ate) — datas de Brasília. */
+function teleconsultasNoPeriodo(
+  q: Pick<EntityManager, 'query'>,
+  produto: Produto,
+  tenantId: string,
+  de: string,
+  ate: string,
+): Promise<number> {
+  return q
+    .query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM crommos.teleconsultas
+        WHERE produto = $1 AND tenant_id = $2
+          AND (realizada_em AT TIME ZONE 'America/Sao_Paulo')::date >= $3::date
+          AND (realizada_em AT TIME ZONE 'America/Sao_Paulo')::date < $4::date`,
+      [produto, tenantId, de, ate],
+    )
+    .then((r) => Number(r[0]?.n ?? 0));
 }
 
 export interface FaturaVencida {
@@ -219,10 +249,17 @@ export class AssinaturaService {
       this.assentos(ator),
     ]);
     if (a)
-      return this.view(a, assentos, hoje, await this.faturaVencida(a, hoje));
+      return this.view(
+        a,
+        assentos,
+        hoje,
+        await this.faturaVencida(a, hoje),
+        await this.teleconsultas(a, assentos),
+      );
     // Sem assinatura: fail-closed (nenhum módulo), como no gating (B5).
     return {
       ...this.valores([], assentos, PlanoPeriodo.Mensal),
+      teleconsultas: null,
       ciclo: null,
       emTrialAte: null,
       emTrial: false,
@@ -295,12 +332,9 @@ export class AssinaturaService {
     hoje = hojeISO(),
   ): Promise<{
     valor: number;
-    /** QA-157: ajuste da virada de faixa (R$/mês, antes do plano). */
-    ajusteFaixa: number;
     valorAtual: number;
     numeroUsuarios: number;
     itens: ItemAssinatura[];
-    faixa: Faixa;
     ajuste: AjusteProRata | null;
     reducao: { abatidoEmPendentes: number; credito: number } | null;
     primeiraFatura: PrimeiraFatura | null;
@@ -324,11 +358,9 @@ export class AssinaturaService {
     const valor = calcularValor(dto.modulos, assentos, dto.plano);
     const base = {
       valor,
-      ajusteFaixa: ajusteVirada(dto.modulos, assentos),
       valorAtual: a ? calcularValor(a.modulosAtivos, atuais, a.plano) : 0,
       numeroUsuarios: assentos.pessoas,
       itens: itensDe(assentos),
-      faixa: faixaDe(assentos.pessoas),
     };
     const ajuste = a ? this.proRata(a, atuais, valor, hoje) : null;
     const primeiraFatura = this.primeiraFatura(a, valor, dto.plano, hoje);
@@ -503,12 +535,14 @@ export class AssinaturaService {
         f.id,
       );
     }
+    const assentos = await this.assentos(ator);
     return {
       ...this.view(
         r.a,
-        await this.assentos(ator),
+        assentos,
         hoje,
         await this.faturaVencida(r.a, hoje),
+        await this.teleconsultas(r.a, assentos),
       ),
       ajuste: r.ajuste,
       fatura: r.fatura,
@@ -741,11 +775,13 @@ export class AssinaturaService {
           !trialExpirado(a, a.cicloFim)
         ) {
           const valorMensal = calcularValor(a.modulosAtivos, assentos, a.plano);
+          const tele = await this.excedentes(em, a, assentos);
           const r = renovarCiclo({
             cicloFim: a.cicloFim,
             plano: a.plano,
             valorMensal,
             saldoCredito: a.saldoCredito,
+            adicional: tele?.valor ?? 0,
           });
           await this.gravarFatura(em, a, {
             tipo: 'ciclo',
@@ -762,6 +798,7 @@ export class AssinaturaService {
               assentos: assentos.porModulo,
               plano: a.plano,
               valorMensal,
+              ...(tele && { teleconsultasExcedentes: tele }),
             },
           });
           a.cicloInicio = r.cicloInicio;
@@ -775,6 +812,76 @@ export class AssinaturaService {
       });
     }
     return geradas;
+  }
+
+  /**
+   * Teleconsulta realizada no produto (API interna). Idempotente pela
+   * referência (id do atendimento no produto): reenvio não conta duas vezes.
+   */
+  async registrarTeleconsulta(
+    produto: Produto,
+    tenantId: string,
+    referencia: string,
+  ): Promise<void> {
+    await this.ds.query(
+      `INSERT INTO crommos.teleconsultas (produto, tenant_id, referencia)
+       VALUES ($1, $2, $3) ON CONFLICT (produto, referencia) DO NOTHING`,
+      [produto, tenantId, referencia],
+    );
+  }
+
+  /** Franquia do ciclo corrente (só com Telemedicina contratada). */
+  private async teleconsultas(
+    a: Assinatura,
+    assentos: Assentos,
+  ): Promise<Teleconsultas | null> {
+    if (!a.modulosAtivos.includes(ModuleCode.Telemedicina)) return null;
+    return {
+      realizadas: await teleconsultasNoPeriodo(
+        this.ds,
+        a.produto,
+        a.tenantId,
+        a.cicloInicio,
+        a.cicloFim,
+      ),
+      incluidas:
+        FRANQUIA_TELECONSULTAS *
+        assentos.porModulo[ModuleCode.Telemedicina] *
+        mesesDoCiclo(a),
+    };
+  }
+
+  /**
+   * Teleconsultas além da franquia no ciclo que fecha (item separado da
+   * fatura seguinte). O ciclo do trial não cobra; sem excedente → null.
+   */
+  private async excedentes(
+    em: EntityManager,
+    a: Assinatura,
+    assentos: Assentos,
+  ) {
+    const trial = !!a.emTrialAte && a.cicloFim <= a.emTrialAte;
+    if (trial || !a.modulosAtivos.includes(ModuleCode.Telemedicina)) {
+      return null;
+    }
+    const realizadas = await teleconsultasNoPeriodo(
+      em,
+      a.produto,
+      a.tenantId,
+      a.cicloInicio,
+      a.cicloFim,
+    );
+    const assentosTele = assentos.porModulo[ModuleCode.Telemedicina];
+    const meses = mesesDoCiclo(a);
+    const quantidade = teleconsultasExcedentes(realizadas, assentosTele, meses);
+    if (!quantidade) return null;
+    return {
+      quantidade,
+      valorUnitario: PRECO_TELECONSULTA_EXCEDENTE,
+      valor: quantidade * PRECO_TELECONSULTA_EXCEDENTE,
+      realizadas,
+      incluidas: FRANQUIA_TELECONSULTAS * assentosTele * meses,
+    };
   }
 
   /** Pró-rata de trocar módulos/plano com os mesmos assentos. */
@@ -895,11 +1002,9 @@ export class AssinaturaService {
       numeroUsuarios: assentos.pessoas,
       plano,
       valor: calcularValor(modulosAtivos, assentos, plano),
-      ajusteFaixa: ajusteVirada(modulosAtivos, assentos),
       catalogo: MODULES,
       itens: itensDe(assentos),
-      faixa: faixaDe(assentos.pessoas),
-      faixas: FAIXAS,
+      escada: ESCADA,
     };
   }
 
@@ -908,9 +1013,11 @@ export class AssinaturaService {
     assentos: Assentos,
     hoje: string,
     faturaVencida: FaturaVencida | null,
+    teleconsultas: Teleconsultas | null,
   ): AssinaturaView {
     return {
       ...this.valores(a.modulosAtivos, assentos, a.plano),
+      teleconsultas,
       ciclo: { inicio: a.cicloInicio, fim: a.cicloFim },
       emTrialAte: a.emTrialAte,
       emTrial: emTrial(a.emTrialAte, hoje),

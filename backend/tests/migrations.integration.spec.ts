@@ -250,6 +250,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
       '08-sessoes-familia.sql',
       '09-acessos-convite-aceite.sql',
       '10-assentos-por-modulo.sql',
+      '11-teleconsultas.sql',
     ]);
     expect(await migrarPlataforma()).toEqual([]);
     estruturaVazio = await estrutura();
@@ -270,6 +271,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
         'faturas',
         'rate_limit',
         'sessoes',
+        'teleconsultas',
         'usuarios',
       ]);
       // Nada fora do crommos.
