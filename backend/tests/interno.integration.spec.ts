@@ -4,6 +4,8 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { Acesso } from 'src/auth/acesso.entity';
 import { gerarConfirmacaoEmail } from 'src/auth/tokens';
+import { AssinaturaService } from 'src/billing/assinatura.service';
+import { ModuleCode } from 'src/billing/modules.catalog';
 import { somarMeses } from 'src/billing/pro-rata';
 import { hojeISO } from 'src/common/data-brasil';
 import {
@@ -207,11 +209,11 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(201);
     let f = await faturas();
     expect(f).toHaveLength(1);
-    // Agenda + Múltiplas unidades: + 25,50 + 12,75 = 38,25 no mês inteiro.
-    expect(Number(f[0].valor_bruto)).toBe(38.25);
+    // Agenda + Múltiplas unidades + Estoque: 25,50 + 12,75 + 8,50 no mês inteiro.
+    expect(Number(f[0].valor_bruto)).toBe(46.75);
     expect(f[0].itens.motivo).toBe('assentos');
 
-    // Vínculo com profissional: o dono passa a ocupar Prontuário e Exames.
+    // Vínculo com profissional: o dono ocupa Prontuário, Exames e Telemedicina.
     const dono = await ds
       .getRepository(Acesso)
       .findOneByOrFail({ tenantId: T2, papel: 'admin', clinico: false });
@@ -220,7 +222,7 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(200);
     expect(r.body.clinico).toBe(true);
     f = await faturas();
-    expect(Number(f[1].valor_bruto)).toBe(42.5); // 25,50 + 17
+    expect(Number(f[1].valor_bruto)).toBe(85); // 25,50 + 17 + 42,50
 
     // Compensação (vínculo não gravado no produto): desfaz a cobrança.
     await interno('delete', '/acessos')
@@ -229,7 +231,7 @@ describeDb('API interna de acessos (integração)', () => {
     // A redução abate as pendentes do ciclo (a mais recente primeiro).
     f = await faturas();
     const total = f.reduce((t, x) => t + Number(x.valor_bruto), 0);
-    expect(total).toBeCloseTo(42.5, 2);
+    expect(total).toBeCloseTo(85, 2);
   });
 
   it('tenant sem assinatura (legado) não tem limite; o produto vem da chave', async () => {
@@ -486,5 +488,70 @@ describeDb('API interna de acessos (integração)', () => {
     await interno('get', `/pessoas/${p.id}`, CHAVE_ODONTO).expect(404);
     await interno('get', `/pessoas/${randomUUID()}`).expect(404);
     await interno('get', '/pessoas/nao-uuid').expect(400);
+  });
+
+  it('POST /teleconsultas: conta na franquia (idempotente); o excedente entra na fatura da renovação', async () => {
+    const T_TELE = randomUUID();
+    await criarAssinatura(ds, {
+      tenantId: T_TELE,
+      modulosAtivos: [ModuleCode.Telemedicina],
+      cicloInicio: '2026-08-01',
+      cicloFim: '2026-09-01',
+    });
+    const medico = await criarPessoa(ds, { email: 'tele@exemplo.com' });
+    await criarAcesso(ds, {
+      usuarioId: medico.id,
+      tenantId: T_TELE,
+      clinico: true,
+    });
+    const refs = Array.from({ length: 23 }, () => randomUUID());
+    await interno('post', '/teleconsultas', null)
+      .send({ tenantId: T_TELE, referencia: refs[0] })
+      .expect(401);
+    await interno('post', '/teleconsultas')
+      .send({ tenantId: T_TELE, referencia: 'x' })
+      .expect(400);
+    for (const referencia of [...refs, refs[0]]) {
+      await interno('post', '/teleconsultas')
+        .send({ tenantId: T_TELE, referencia })
+        .expect(204);
+    }
+    // realizadas no ciclo que fecha (agosto); o reenvio não contou de novo
+    await ds.query(
+      `UPDATE crommos.teleconsultas SET realizada_em = '2026-08-10T15:00:00Z'
+        WHERE tenant_id = $1`,
+      [T_TELE],
+    );
+    const [{ n }] = await ds.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM crommos.teleconsultas WHERE tenant_id = $1`,
+      [T_TELE],
+    );
+    expect(n).toBe(23);
+
+    const svc = app.get(AssinaturaService);
+    await svc.renovarVencidas('2026-09-15');
+    const [fatura] = await ds.query<
+      { valor_bruto: string; itens: Record<string, unknown> }[]
+    >(
+      `SELECT f.valor_bruto, f.itens FROM crommos.faturas f
+         JOIN crommos.assinaturas a ON a.id = f.assinatura_id
+        WHERE a.tenant_id = $1`,
+      [T_TELE],
+    );
+    // 1 médico: 42,50 + (23 − 20) × 2,00
+    expect(Number(fatura.valor_bruto)).toBe(48.5);
+    expect(fatura.itens.teleconsultasExcedentes).toEqual({
+      quantidade: 3,
+      valorUnitario: 2,
+      valor: 6,
+      realizadas: 23,
+      incluidas: 20,
+    });
+    // o ciclo novo começa sem teleconsultas
+    const view = await svc.getCurrent(
+      { usuarioId: medico.id, produto: 'clinic', tenantId: T_TELE },
+      '2026-09-15',
+    );
+    expect(view.teleconsultas).toEqual({ realizadas: 0, incluidas: 20 });
   });
 });

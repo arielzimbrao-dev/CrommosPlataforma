@@ -71,3 +71,13 @@ export class RemoverAcessoDto {
   @IsUUID()
   usuarioId!: string;
 }
+
+/** Teleconsulta concluída no produto (franquia da Telemedicina). */
+export class RegistrarTeleconsultaDto {
+  @IsUUID()
+  tenantId!: string;
+
+  /** Id do atendimento no produto: reenvio não conta duas vezes. */
+  @IsUUID()
+  referencia!: string;
+}

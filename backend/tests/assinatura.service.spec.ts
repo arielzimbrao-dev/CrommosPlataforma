@@ -14,8 +14,8 @@ const HOJE = '2026-09-16';
 const ATOR: Ator = { usuarioId: USER, produto: 'clinic', tenantId: TENANT };
 
 /**
- * Assinatura padrão: Agenda (25,50) × 5 pessoas = R$ 127,50/mês, ciclo de 30
- * dias. Os assentos vêm dos acessos (`equipe`): 5 médicos-admin.
+ * Assinatura padrão: Agenda com 5 pessoas (3 × 25,50 + 2 × 21,68) = R$ 119,86
+ * por mês, ciclo de 30 dias. Os assentos vêm dos acessos (`equipe`): 5 médicos-admin.
  */
 function assinatura(p: Partial<Assinatura> = {}): Assinatura {
   return {
@@ -36,7 +36,17 @@ function assinatura(p: Partial<Assinatura> = {}): Assinatura {
 const equipe = (n: number, papel = 'admin', clinico = true) =>
   Array.from({ length: n }, () => ({ papel, clinico }));
 
-function make(atual: Assinatura | null = assinatura(), pessoas = equipe(5)) {
+function make(
+  atual: Assinatura | null = assinatura(),
+  pessoas = equipe(5),
+  teleconsultas = 0,
+) {
+  // COUNT das teleconsultas realizadas; o resto (UPDATE) devolve [linhas, n].
+  const query = jest.fn((sql: string) =>
+    Promise.resolve(
+      sql.includes('crommos.teleconsultas') ? [{ n: teleconsultas }] : [[], 0],
+    ),
+  );
   const assinRepo = {
     findOne: jest.fn().mockResolvedValue(atual),
     find: jest.fn(),
@@ -56,10 +66,11 @@ function make(atual: Assinatura | null = assinatura(), pessoas = equipe(5)) {
   const em = {
     getRepository: (e: unknown) =>
       e === Assinatura ? assinRepo : e === Acesso ? acessoRepo : fatRepo,
+    query,
   };
   const ds = {
     transaction: jest.fn((cb: (m: typeof em) => unknown) => cb(em)),
-    query: jest.fn().mockResolvedValue([[], 0]),
+    query,
     manager: em,
   };
   const repo = {
@@ -114,14 +125,23 @@ describe('AssinaturaService — gating e leitura', () => {
       assinatura({ emTrialAte: '2026-09-20', saldoCredito: 42.5 }),
     );
     const view = await svc.getCurrent(ATOR, HOJE);
-    expect(view.valor).toBe(127.5);
+    // escada: 3 × 25,50 + 2 × 21,68
+    expect(view.valor).toBe(119.86);
     expect(view.numeroUsuarios).toBe(5);
-    expect(view.faixa).toEqual({ de: 1, ate: 5, desconto: 0 });
+    expect(view).not.toHaveProperty('faixa');
+    expect(view).not.toHaveProperty('ajusteFaixa');
     expect(view.itens.find((i) => i.code === ModuleCode.Prontuario)).toEqual({
       code: ModuleCode.Prontuario,
       pessoas: 5,
       preco: 25.5,
+      degraus: [
+        { qtd: 3, preco: 25.5 },
+        { qtd: 2, preco: 21.68 },
+      ],
+      subtotal: 119.86,
     });
+    // sem o módulo Telemedicina, nada de franquia
+    expect(view.teleconsultas).toBeNull();
     expect(view.ciclo).toEqual({ inicio: '2026-09-01', fim: '2026-10-01' });
     expect(view.emTrial).toBe(true);
     expect(view.emTrialAte).toBe('2026-09-20');
@@ -129,6 +149,22 @@ describe('AssinaturaService — gating e leitura', () => {
     expect(view.trialConfirmado).toBe(false);
     expect(view.modoLeitura).toBeNull();
     expect(view.faturaVencida).toBeNull();
+  });
+
+  it('Telemedicina: teleconsultas do ciclo e a franquia (20 por assento/mês)', async () => {
+    const { svc, ds } = make(
+      assinatura({
+        modulosAtivos: [ModuleCode.Agenda, ModuleCode.Telemedicina],
+      }),
+      [...equipe(2), ...equipe(3, 'recepcao', false)],
+      27,
+    );
+    const view = await svc.getCurrent(ATOR, HOJE);
+    expect(view.teleconsultas).toEqual({ realizadas: 27, incluidas: 40 });
+    expect(ds.query).toHaveBeenCalledWith(
+      expect.stringContaining('crommos.teleconsultas'),
+      ['clinic', TENANT, '2026-09-01', '2026-10-01'],
+    );
   });
 
   it('trial acabou sem confirmação → modo leitura (trial_expirado)', async () => {
@@ -225,20 +261,20 @@ const AGENDA_PRONT = [ModuleCode.Agenda, ModuleCode.Prontuario];
 describe('AssinaturaService.simular', () => {
   it('devolve o valor, os assentos e o pró-rata que seria gerado', async () => {
     const { svc } = make();
-    // 127,50 → 255 (+ Prontuário, 5 assentos), 15 de 30 dias → 63,75
+    // 119,86 → 239,72 (+ Prontuário, 5 assentos), 15 de 30 dias → 59,93
     const r = await svc.simular(
       ATOR,
       { modulos: AGENDA_PRONT, plano: PlanoPeriodo.Mensal },
       HOJE,
     );
-    expect(r.valor).toBe(255);
-    expect(r.valorAtual).toBe(127.5);
+    expect(r.valor).toBe(239.72);
+    expect(r.valorAtual).toBe(119.86);
     expect(r.numeroUsuarios).toBe(5);
-    expect(r.ajuste).toMatchObject({ tipo: 'complementar', valor: 63.75 });
+    expect(r.ajuste).toMatchObject({ tipo: 'complementar', valor: 59.93 });
     expect(r.reducao).toBeNull();
   });
 
-  it('adicionar: impacto de ativar uma pessoa (a 6ª muda a faixa)', async () => {
+  it('adicionar: impacto de ativar uma pessoa (a 6ª paga o 2º degrau)', async () => {
     const { svc } = make();
     const r = await svc.simular(
       ATOR,
@@ -249,13 +285,13 @@ describe('AssinaturaService.simular', () => {
       },
       HOJE,
     );
-    // 6 × 22,95 (faixa 6–10)
+    // 119,86 + 21,68 (6º assento da Agenda)
     expect(r).toMatchObject({
-      valorAtual: 127.5,
-      valor: 137.7,
+      valorAtual: 119.86,
+      valor: 141.54,
       numeroUsuarios: 6,
     });
-    expect(r.faixa.desconto).toBe(10);
+    expect(r).not.toHaveProperty('faixa');
     expect(r.itens.find((i) => i.code === ModuleCode.Prontuario)?.pessoas).toBe(
       5,
     );
@@ -267,13 +303,13 @@ describe('AssinaturaService.simular', () => {
       { papel: 'recepcao', clinico: false },
     ]);
     const modulos = [ModuleCode.Agenda, ModuleCode.Financeiro];
-    // hoje: Agenda 5 × 25,50 + Financeiro 4 × 29,75 = 246,50
+    // hoje: Agenda 119,86 (5) + Financeiro 3 × 29,75 + 25,29 = 234,40
     const sem = await svc.simular(
       ATOR,
       { modulos, plano: PlanoPeriodo.Mensal, remover: { papel: 'recepcao' } },
       HOJE,
     );
-    expect(sem).toMatchObject({ valor: 221, numeroUsuarios: 4 });
+    expect(sem).toMatchObject({ valor: 212.72, numeroUsuarios: 4 });
     // recepção → financeiro: sai da Agenda, entra no Financeiro
     const troca = await svc.simular(
       ATOR,
@@ -285,17 +321,17 @@ describe('AssinaturaService.simular', () => {
       },
       HOJE,
     );
-    expect(troca).toMatchObject({ valor: 250.75, numeroUsuarios: 5 });
+    expect(troca).toMatchObject({ valor: 238.01, numeroUsuarios: 5 });
     // prefere quem tem o mesmo vínculo clínico; sem ninguém do papel, nada muda
     const nada = await svc.simular(
       ATOR,
       { modulos, plano: PlanoPeriodo.Mensal, remover: { papel: 'gestor' } },
       HOJE,
     );
-    expect(nada.valor).toBe(246.5);
+    expect(nada.valor).toBe(234.4);
   });
 
-  it('QA-157: simular mostra o ajuste da virada de faixa (10 → 11 pessoas)', async () => {
+  it('escada: a 11ª pessoa só soma o preço do assento dela (sem ajuste de virada)', async () => {
     const { svc } = make(assinatura(), equipe(10, 'recepcao', false));
     const r = await svc.simular(
       ATOR,
@@ -306,22 +342,15 @@ describe('AssinaturaService.simular', () => {
       },
       HOJE,
     );
-    expect(r).toMatchObject({
-      valorAtual: 229.5,
-      valor: 229.5,
-      ajusteFaixa: 5.1,
-    });
-    const view = await make(
-      assinatura(),
-      equipe(11, 'recepcao', false),
-    ).svc.getCurrent(ATOR, HOJE);
-    expect(view).toMatchObject({ valor: 229.5, ajusteFaixa: 5.1 });
+    // 3 × 25,50 + 7 × 21,68 = 228,26 → + 19,13
+    expect(r).toMatchObject({ valorAtual: 228.26, valor: 247.39 });
+    expect(r).not.toHaveProperty('ajusteFaixa');
   });
 
   it('N-02: redução mostra quanto abate da fatura pendente e quanto vira crédito', async () => {
     const { svc, faturas } = make(assinatura({ modulosAtivos: AGENDA_PRONT }));
     faturas.find.mockResolvedValue([{ valorBruto: 50, creditoAplicado: 0 }]);
-    // 255 → 127,50: 63,75 de redução; 50 abatem a pendente, 13,75 viram crédito
+    // 239,72 → 119,86: 59,93 de redução; 50 abatem a pendente, 9,93 viram crédito
     const r = await svc.simular(
       ATOR,
       { modulos: [ModuleCode.Agenda], plano: PlanoPeriodo.Mensal },
@@ -336,7 +365,7 @@ describe('AssinaturaService.simular', () => {
       },
       order: { createdAt: 'DESC' },
     });
-    expect(r.reducao).toEqual({ abatidoEmPendentes: 50, credito: 13.75 });
+    expect(r.reducao).toEqual({ abatidoEmPendentes: 50, credito: 9.93 });
   });
 
   it('sem assinatura → ajuste nulo', async () => {
@@ -425,8 +454,8 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
       where: { produto: 'clinic', tenantId: TENANT, ativo: true },
       select: { id: true, papel: true, clinico: true },
     });
-    expect(r.valor).toBe(255);
-    expect(r.ajuste).toMatchObject({ tipo: 'complementar', valor: 63.75 });
+    expect(r.valor).toBe(239.72);
+    expect(r.ajuste).toMatchObject({ tipo: 'complementar', valor: 59.93 });
     const fatura = fatRepo.save.mock.calls[0][0];
     expect(fatura).toMatchObject({
       tenantId: TENANT,
@@ -434,14 +463,14 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
       tipo: 'complementar',
       periodoInicio: HOJE,
       periodoFim: '2026-10-01',
-      valorBruto: 63.75,
+      valorBruto: 59.93,
       creditoAplicado: 0,
-      valorLiquido: 63.75,
+      valorLiquido: 59.93,
       status: 'pendente',
       vencimento: HOJE,
       createdBy: USER,
     });
-    expect(r.fatura).toMatchObject({ id: 'f1', valorLiquido: 63.75 });
+    expect(r.fatura).toMatchObject({ id: 'f1', valorLiquido: 59.93 });
     expect(assinRepo.save.mock.calls[0][0]).toMatchObject({
       modulosAtivos: AGENDA_PRONT,
       numeroUsuarios: 5,
@@ -465,24 +494,24 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
     await svc.upsert(ATOR, MAIS_PRONT, HOJE);
     const f = fatRepo.save.mock.calls[0][0];
     expect(f).toMatchObject({
-      valorBruto: 63.75,
-      creditoAplicado: 63.75,
+      valorBruto: 59.93,
+      creditoAplicado: 59.93,
       valorLiquido: 0,
       status: 'paga',
     });
     expect(f.pagoEm).toBeInstanceOf(Date);
-    expect(assinRepo.save.mock.calls[0][0].saldoCredito).toBe(36.25);
+    expect(assinRepo.save.mock.calls[0][0].saldoCredito).toBe(40.07);
   });
 
   it('downgrade soma crédito e não gera fatura', async () => {
     const { svc, fatRepo, assinRepo } = make(assinatura({ saldoCredito: 10 }));
     const r = await svc.upsert(ATOR, { modulosAtivos: [] }, HOJE);
-    // 127,50 → 0: −127,50 × 15/30 = 63,75 de crédito
-    expect(r.ajuste).toMatchObject({ tipo: 'credito', valor: 63.75 });
+    // 119,86 → 0: −119,86 × 15/30 = 59,93 de crédito
+    expect(r.ajuste).toMatchObject({ tipo: 'credito', valor: 59.93 });
     expect(r.fatura).toBeNull();
     expect(fatRepo.save).not.toHaveBeenCalled();
-    expect(assinRepo.save.mock.calls[0][0].saldoCredito).toBe(73.75);
-    expect(r.saldoCredito).toBe(73.75);
+    expect(assinRepo.save.mock.calls[0][0].saldoCredito).toBe(69.93);
+    expect(r.saldoCredito).toBe(69.93);
   });
 
   it('no trial não há ajuste', async () => {
@@ -549,9 +578,9 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
     fatRepo.find.mockResolvedValue([
       {
         id: 'f9',
-        valorBruto: 63.75,
+        valorBruto: 59.93,
         creditoAplicado: 0,
-        valorLiquido: 63.75,
+        valorLiquido: 59.93,
         status: 'pendente',
         itens: { motivo: 'pro-rata' },
       },
@@ -571,7 +600,7 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
       order: { createdAt: 'DESC' },
       lock: { mode: 'pessimistic_write' },
     });
-    expect(r.ajuste).toMatchObject({ tipo: 'credito', valor: 63.75 });
+    expect(r.ajuste).toMatchObject({ tipo: 'credito', valor: 59.93 });
     expect(r.saldoCredito).toBe(0);
     expect(assinRepo.save.mock.calls[0][0].saldoCredito).toBe(0);
     expect(fatRepo.save.mock.calls[0][0]).toMatchObject({
@@ -582,7 +611,7 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
       updatedBy: USER,
       itens: {
         motivo: 'pro-rata',
-        reducoes: [{ em: HOJE, valor: 63.75 }],
+        reducoes: [{ em: HOJE, valor: 59.93 }],
       },
     });
     expect(audit.registrar).toHaveBeenCalledWith(
@@ -602,40 +631,40 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
       { id: 'fa', valorBruto: 100, creditoAplicado: 0, status: 'pendente' },
       { id: 'fb', valorBruto: 40, creditoAplicado: 30, status: 'pendente' },
     ]);
-    // redução de 63,75 — ver teste anterior
+    // redução de 59,93 — ver teste anterior
     await svc.upsert(ATOR, { modulosAtivos: [ModuleCode.Agenda] }, HOJE);
     expect(fatRepo.save).toHaveBeenCalledTimes(1);
     expect(fatRepo.save.mock.calls[0][0]).toMatchObject({
       id: 'fa',
-      valorBruto: 36.25,
-      valorLiquido: 36.25,
+      valorBruto: 40.07,
+      valorLiquido: 40.07,
       status: 'pendente',
-      itens: { reducoes: [{ em: HOJE, valor: 63.75 }] },
+      itens: { reducoes: [{ em: HOJE, valor: 59.93 }] },
     });
     expect(audit.registrar).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'reduzir', resourceId: 'fa' }),
     );
 
-    // crédito já aplicado: bruto 40 (30 de crédito) − 31,88 → bruto 8,12 coberto
+    // crédito já aplicado: bruto 40 (30 de crédito) − 29,97 → bruto 10,03 coberto
     const mu = [ModuleCode.Agenda, ModuleCode.MultiplasUnidades];
     const m = make(assinatura({ modulosAtivos: mu }));
     m.fatRepo.find.mockResolvedValue([
       { id: 'fc', valorBruto: 40, creditoAplicado: 30, status: 'pendente' },
     ]);
-    // sem Múltiplas unidades: −5 × 12,75 × 15/30 = 31,88
+    // sem Múltiplas unidades: −(3 × 12,75 + 2 × 10,84) × 15/30 = 29,97
     const r = await m.svc.upsert(
       ATOR,
       { modulosAtivos: [ModuleCode.Agenda] },
       HOJE,
     );
     expect(m.fatRepo.save.mock.calls[0][0]).toMatchObject({
-      valorBruto: 8.12,
-      creditoAplicado: 8.12,
+      valorBruto: 10.03,
+      creditoAplicado: 10.03,
       valorLiquido: 0,
       status: 'paga',
     });
     expect(m.fatRepo.save.mock.calls[0][0].pagoEm).toBeInstanceOf(Date);
-    expect(r.saldoCredito).toBe(21.88);
+    expect(r.saldoCredito).toBe(19.97);
   });
 });
 
@@ -690,7 +719,8 @@ describe('AssinaturaService.comReprecificacao (acessos)', () => {
       .mockResolvedValueOnce(equipe(5))
       .mockResolvedValueOnce(equipe(4));
     fatRepo.find.mockResolvedValue([
-      { id: 'fp', valorBruto: 12.75, creditoAplicado: 0, status: 'pendente' },
+      // 5 → 4 na Agenda: −21,68 × 15/30 = 10,84
+      { id: 'fp', valorBruto: 10.84, creditoAplicado: 0, status: 'pendente' },
     ]);
     await svc.comReprecificacao('clinic', TENANT, gravar, HOJE);
     expect(fatRepo.save.mock.calls[0][0]).toMatchObject({
@@ -765,10 +795,12 @@ describe('AssinaturaService — faturas', () => {
 
   it('atualizarInadimplencia: marca e desmarca (todos os tenants) e soma as linhas', async () => {
     const { svc, ds } = make();
-    ds.query.mockResolvedValueOnce([[], 2]).mockResolvedValueOnce([[], 1]);
+    ds.query
+      .mockResolvedValueOnce([[], 2] as never)
+      .mockResolvedValueOnce([[], 1] as never);
     await expect(svc.atualizarInadimplencia(HOJE)).resolves.toBe(3);
-    expect(ds.query.mock.calls[0][1]).toEqual([HOJE, 7]);
-    ds.query.mockResolvedValue(undefined);
+    expect((ds.query.mock.calls[0] as unknown[])[1]).toEqual([HOJE, 7]);
+    ds.query.mockResolvedValue(undefined as never);
     await expect(svc.atualizarInadimplencia(HOJE)).resolves.toBe(0);
   });
 
@@ -835,9 +867,9 @@ describe('AssinaturaService.renovarVencidas', () => {
       tipo: 'ciclo',
       periodoInicio: '2026-09-16',
       periodoFim: '2026-10-16',
-      valorBruto: 127.5,
+      valorBruto: 119.86,
       creditoAplicado: 50,
-      valorLiquido: 77.5,
+      valorLiquido: 69.86,
       status: 'pendente',
       vencimento: '2026-09-16',
     });
@@ -846,6 +878,67 @@ describe('AssinaturaService.renovarVencidas', () => {
       cicloFim: '2026-10-16',
       saldoCredito: 0,
     });
+  });
+
+  it('Telemedicina: teleconsultas além da franquia entram na fatura seguinte como item separado', async () => {
+    const vencida = assinatura({
+      modulosAtivos: [ModuleCode.Agenda, ModuleCode.Telemedicina],
+      cicloFim: '2026-09-16',
+      cicloInicio: '2026-08-16',
+    });
+    // 5 médicos: franquia 100; 107 realizadas → 7 × R$ 2,00
+    const { svc, fatRepo, em } = make(vencida, equipe(5), 107);
+    await expect(svc.renovarVencidas(HOJE)).resolves.toBe(1);
+    // Agenda 119,86 + Telemedicina 3 × 42,50 + 2 × 36,13 = 319,62; + 14
+    expect(fatRepo.save.mock.calls[0][0]).toMatchObject({
+      valorBruto: 333.62,
+      valorLiquido: 333.62,
+      itens: expect.objectContaining({
+        valorMensal: 319.62,
+        teleconsultasExcedentes: {
+          quantidade: 7,
+          valorUnitario: 2,
+          valor: 14,
+          realizadas: 107,
+          incluidas: 100,
+        },
+      }),
+    });
+    expect(em.query).toHaveBeenCalledWith(
+      expect.stringContaining('crommos.teleconsultas'),
+      ['clinic', TENANT, '2026-08-16', '2026-09-16'],
+    );
+  });
+
+  it('Telemedicina: dentro da franquia, ou fechando o ciclo do trial, não cobra teleconsulta', async () => {
+    const tele = [ModuleCode.Telemedicina];
+    const dentro = make(
+      assinatura({
+        modulosAtivos: tele,
+        cicloInicio: '2026-08-16',
+        cicloFim: '2026-09-16',
+      }),
+      equipe(5),
+      100,
+    );
+    await dentro.svc.renovarVencidas(HOJE);
+    expect(dentro.fatRepo.save.mock.calls[0][0].itens).not.toHaveProperty(
+      'teleconsultasExcedentes',
+    );
+    const trial = make(
+      assinatura({
+        modulosAtivos: tele,
+        cicloInicio: '2026-09-02',
+        cicloFim: '2026-09-16',
+        emTrialAte: '2026-09-16',
+        trialConfirmadoEm: new Date(),
+      }),
+      equipe(1),
+      500,
+    );
+    await trial.svc.renovarVencidas(HOJE);
+    expect(trial.fatRepo.save.mock.calls[0][0].valorBruto).toBe(42.5);
+    expect(trial.em.query).not.toHaveBeenCalled();
   });
 
   it('trial sem confirmação não fatura (modo leitura)', async () => {

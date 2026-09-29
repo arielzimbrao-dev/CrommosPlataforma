@@ -14,12 +14,14 @@ import {
 import { ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { IsPublic } from '../auth/decorators/is-public.decorator';
+import { AssinaturaService } from '../billing/assinatura.service';
 import type { Produto } from '../common/produtos';
 import { AcessosService } from './acessos.service';
 import {
   AtualizarAcessoDto,
   CriarAcessoDto,
   ReenviarConviteDto,
+  RegistrarTeleconsultaDto,
   RemoverAcessoDto,
 } from './dtos/acessos.dtos';
 import { ProdutoServico, ServicoKeyGuard } from './servico-key.guard';
@@ -34,7 +36,10 @@ import { ProdutoServico, ServicoKeyGuard } from './servico-key.guard';
 @UseGuards(ServicoKeyGuard)
 @Controller('interno')
 export class InternoController {
-  constructor(private readonly acessos: AcessosService) {}
+  constructor(
+    private readonly acessos: AcessosService,
+    private readonly assinaturas: AssinaturaService,
+  ) {}
 
   @Post('acessos')
   criar(@ProdutoServico() produto: Produto, @Body() dto: CriarAcessoDto) {
@@ -66,6 +71,20 @@ export class InternoController {
     @Body() dto: ReenviarConviteDto,
   ): Promise<void> {
     return this.acessos.reenviarConvite(produto, dto);
+  }
+
+  /** Teleconsulta concluída: conta na franquia do ciclo (idempotente). */
+  @Post('teleconsultas')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  teleconsulta(
+    @ProdutoServico() produto: Produto,
+    @Body() dto: RegistrarTeleconsultaDto,
+  ): Promise<void> {
+    return this.assinaturas.registrarTeleconsulta(
+      produto,
+      dto.tenantId,
+      dto.referencia,
+    );
   }
 
   @Get('pessoas/:usuarioId')

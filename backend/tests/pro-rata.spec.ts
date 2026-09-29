@@ -295,6 +295,21 @@ describe('renovarCiclo', () => {
     expect(a.valorBruto).toBe(12480);
   });
 
+  it('adicional (teleconsultas excedentes do ciclo que fechou) soma ao bruto; o crédito abate o total', () => {
+    const r = renovarCiclo({
+      cicloFim: '2026-10-01',
+      plano: PlanoPeriodo.Semestral,
+      valorMensal: 100.1,
+      saldoCredito: 10,
+      adicional: 14,
+    });
+    expect(r).toMatchObject({
+      valorBruto: 614.6,
+      creditoAplicado: 10,
+      valorLiquido: 604.6,
+    });
+  });
+
   it('aplica o crédito acumulado; o excedente segue como saldo', () => {
     const r = renovarCiclo({
       cicloFim: '2026-10-01',

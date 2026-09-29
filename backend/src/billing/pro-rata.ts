@@ -144,16 +144,20 @@ export function abaterReducao(
 
 /**
  * Renovação: o próximo ciclo começa no fim do atual e é cobrado adiantado,
- * pelo valor vigente (mensal × meses do plano), menos o crédito acumulado.
+ * pelo valor vigente (mensal × meses do plano) + `adicional` (uso do ciclo que
+ * fechou: teleconsultas excedentes), menos o crédito acumulado.
  */
 export function renovarCiclo(p: {
   cicloFim: string;
   plano: PlanoPeriodo;
   valorMensal: number;
   saldoCredito: number;
+  adicional?: number;
 }) {
   const meses = MESES_DO_PLANO[p.plano];
-  const valorBruto = reais(centavos(p.valorMensal) * meses);
+  const valorBruto = reais(
+    centavos(p.valorMensal) * meses + centavos(p.adicional ?? 0),
+  );
   const c = aplicarCredito(valorBruto, p.saldoCredito);
   return {
     cicloInicio: p.cicloFim,
