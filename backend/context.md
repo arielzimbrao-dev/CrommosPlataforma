@@ -94,4 +94,7 @@ npm ci && npm run start:dev
   O webhook precisa do corpo cru (`rawBody: true` no `main.ts` e no `criarApp` dos testes).
 - **Réplicas:** rate limit em `crommos.rate_limit` (`ThrottlerPostgres`), jobs com `comLockGlobal`,
   migrations com advisory lock; nada de estado em memória entre requisições.
+- **Login contra botnet (S-06):** além de IP e IP+e-mail, falhas por conta na última hora; a partir
+  de 10, atraso progressivo (250 ms → 5 s, `TentativasService.esperar`) e alerta no log — nunca 429
+  por conta (seria DoS contra o dono). `/interno` tem limite próprio (600/min por IP, S-07).
 - **Banco vazio (B4):** `aguardarSchemas` antes das migrations (produção: produtos configurados).
