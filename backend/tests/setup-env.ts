@@ -32,3 +32,5 @@ process.env.SERVICO_KEY_ODONTO ??=
   'chave-de-servico-do-odonto-para-testes-000000';
 process.env.PLATAFORMA_API_KEY ??=
   'chave-da-plataforma-para-testes-0123456789abcdef';
+process.env.DATA_ENCRYPTION_KEY ??=
+  'chave-de-dados-da-plataforma-para-testes-0123456789';

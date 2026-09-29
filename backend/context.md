@@ -98,3 +98,13 @@ npm ci && npm run start:dev
   de 10, atraso progressivo (250 ms → 5 s, `TentativasService.esperar`) e alerta no log — nunca 429
   por conta (seria DoS contra o dono). `/interno` tem limite próprio (600/min por IP, S-07).
 - **Banco vazio (B4):** `aguardarSchemas` antes das migrations (produção: produtos configurados).
+- **2FA (L-07, migration 13):** TOTP próprio (`auth/totp.ts`, RFC 6238 com `node:crypto`), segredo
+  cifrado (`common/crypto/cifra.ts`, `DATA_ENCRYPTION_KEY`; sem ela, ligar = 503). Login com 2FA =
+  `{ doisFatores: { desafio } }` (JWT `typ: '2fa'`, 5 min — o `JwtStrategy` e o produto só aceitam
+  `access`) → `POST /auth/login/codigo`. Passo usado fica em `totp_ultimo_passo` (código não se
+  reusa); recuperação só com hash (`array_remove` atômico). Clínica exige (`assinaturas.exigir_2fa`,
+  padrão falso) de `admin`, `profissional` e acesso `clinico`: sem 2FA, configura no próprio login.
+  5 códigos errados por pessoa em 15 min → 429.
+- **Registros de acesso (L-24, migration 12):** `auditoria.ip`/`user_agent` em login, `login-falha`,
+  `refresh`, `trocar-senha`, `logout` e `2fa-*` (`resource = 'auth'`). Purga no `SessoesCron` pela
+  `RETENCAO_REGISTROS_ACESSO_DIAS` (365, proposta). `GET /auth/acessos` (admin, 90 dias).

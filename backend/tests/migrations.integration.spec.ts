@@ -251,6 +251,8 @@ describeDb('Migrations da plataforma (plat_int)', () => {
       '09-acessos-convite-aceite.sql',
       '10-assentos-por-modulo.sql',
       '11-teleconsultas.sql',
+      '12-registros-acesso.sql',
+      '13-dois-fatores.sql',
     ]);
     expect(await migrarPlataforma()).toEqual([]);
     estruturaVazio = await estrutura();

@@ -70,6 +70,15 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
 | Método e rota | Corpo | Resposta |
 |---|---|---|
 | `POST /auth/login` | `{ email, password, produto, tenantId? }` (`tenantId` = UUID ou código de 5) | Sucesso: `{ accessToken, pessoa: { id, nome, email }, acesso: { produto, tenantId, papel } }` + cookie. Mais de um acesso ativo (e não pendente) no produto e sem `tenantId`: `200 { escolherClinica: [{ tenantId, codigo, nome }] }` sem token. Credencial errada / sem acesso / convite ainda não aceito: `401` genérico. `429` depois de 5 falhas por IP + e-mail (ou 50 por IP) em 15 min (QA-003) |
+| `POST /auth/login` com 2FA (L-07) | igual | Pessoa com 2FA ligado, ou clínica que exige 2FA do papel (admin, profissional ou acesso `clinico`): `200 { doisFatores: { desafio, configurar?: { chave, link } } }` **sem token**. `configurar` = exigido e ainda sem 2FA: segredo novo (chave base32 + link `otpauth://`) para cadastrar no app agora. `desafio` vale 5 min |
+| `POST /auth/login/codigo` | `{ desafio, codigo }` (6 dígitos do app ou código de recuperação `XXXX-XXXX`) | Sucesso do login + cookie; se configurou agora, também `codigosRecuperacao` (10, mostrados uma vez). `401` código errado, já usado ou desafio vencido; `429` depois de 5 códigos errados da pessoa em 15 min |
+| `GET /auth/2fa` | autenticado | `{ ativo, exigido, codigosRestantes }` |
+| `POST /auth/2fa/iniciar` | autenticado | `201 { chave, link }` (pendente até confirmar); `409` já ligado; `503` sem `DATA_ENCRYPTION_KEY` |
+| `POST /auth/2fa/confirmar` | autenticado; `{ codigo }` | `201 { codigosRecuperacao }` (liga); `400` código errado |
+| `POST /auth/2fa/desligar` | autenticado; `{ senha }` | `204`; `400` senha errada; `409` a clínica exige 2FA do papel |
+| `GET /auth/2fa/clinica` · `PATCH /auth/2fa/clinica` | `admin`; `PATCH { exigir }` | `{ exigir, comDoisFatores: [usuarioId] }` · `{ exigir }` (auditado `2fa-exigencia`). Padrão: não exige |
+| `POST /auth/2fa/desligar/:usuarioId` | `admin` | `204` desliga o 2FA de quem tem acesso à clínica (perdeu o celular; auditado `2fa-desligado-pelo-admin`); `404` fora da clínica. O 2FA é da pessoa: vale em todas as clínicas dela |
+| `GET /auth/acessos?usuarioId=&limit=&offset=` | `admin` | L-24: `{ data: [{ em, usuarioId, acao, ip, navegador }], total }` da equipe, últimos 90 dias (`login`, `login-falha`, `refresh`, `trocar-senha`, `logout`, `2fa-*`) |
 | `POST /auth/refresh` | cookie | igual ao sucesso do login (rotaciona). `401` = sessão encerrada. `429` depois de 20 renovações/min da mesma sessão (ou 300/min por IP): o refresh **não** é consumido — o cliente espera e tenta de novo, sem encerrar a sessão (QA-100) |
 | `POST /auth/logout` | cookie | `204` |
 | `POST /auth/forgot-password` | `{ email }` | `202` sempre (no máximo 3 e-mails/h por endereço; acima disso, `202` sem envio) |
@@ -119,6 +128,7 @@ repassam nas chamadas entre si.
 | Método e rota | Corpo | Resposta |
 |---|---|---|
 | `POST /interno/tenants` | `{ tenantId, codigo, nomeClinica, cnpj?, nomeUnidade, admin: { usuarioId, nome, email } }` | `201` — cria clínica (id = tenantId), 1ª unidade e vínculo admin. Idempotente por `tenantId` |
+| `POST /interno/usuarios/:usuarioId/anonimizar` | — | `204` — L-29: a pessoa excluiu a conta; o produto troca nome e e-mail da cópia local (`Conta excluída`, `excluida-<usuarioId>@anonimizado.invalid`) em todas as clínicas. Idempotente; a plataforma tenta de novo (job de 10 min) enquanto não receber 2xx |
 
 Se o provisionamento falhar, a plataforma desfaz o signup (cliente, pessoa nova, assinatura,
 acesso) e responde `502`.

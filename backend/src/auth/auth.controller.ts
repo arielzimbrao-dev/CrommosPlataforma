@@ -34,7 +34,8 @@ import {
 import { CurrentUser } from './decorators/current-user.decorator';
 import { ExigeAcesso, PAPEL_ADMIN } from './decorators/exige-acesso.decorator';
 import { IsPublic } from './decorators/is-public.decorator';
-import { LoginDto } from './dtos/login.dto';
+import { LoginCodigoDto, LoginDto } from './dtos/login.dto';
+import type { DesafioDoisFatores } from './dois-fatores.service';
 import {
   AceitarConviteDto,
   ListarAcessosDto,
@@ -96,10 +97,36 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<SessaoResponse | EscolherClinica> {
+  ): Promise<SessaoResponse | EscolherClinica | DesafioDoisFatores> {
     const r = await this.auth.login(dto, contextoDe(req));
     // Mais de uma clínica: sem sessão; o cliente refaz com o `tenantId`.
-    return 'escolherClinica' in r ? r : responderSessao(res, r);
+    // Com 2FA (L-07): sem sessão; o cliente manda o código ao /login/codigo.
+    return 'escolherClinica' in r || 'doisFatores' in r
+      ? r
+      : responderSessao(res, r);
+  }
+
+  /** 2º passo do login com 2FA: desafio + código do app ou de recuperação. */
+  @Throttle({ default: { ttl: MINUTO, limit: 30 } })
+  @IsPublic()
+  @Post('login/codigo')
+  @HttpCode(HttpStatus.OK)
+  async loginCodigo(
+    @Body() dto: LoginCodigoDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<SessaoResponse & { codigosRecuperacao?: string[] }> {
+    const s = await this.auth.loginComCodigo(
+      dto.desafio,
+      dto.codigo,
+      contextoDe(req),
+    );
+    return s.codigosRecuperacao
+      ? {
+          ...responderSessao(res, s),
+          codigosRecuperacao: s.codigosRecuperacao,
+        }
+      : responderSessao(res, s);
   }
 
   // QA-100: por IP, generoso (a clínica inteira atrás de um NAT renova junto);

@@ -19,6 +19,11 @@ import { ITokenPayload } from '../common/interfaces/token-payload.interface';
 import { configProduto, Produto } from '../common/produtos';
 import { MailService } from '../mail/mail.service';
 import { Acesso } from './acesso.entity';
+import {
+  DesafioDoisFatores,
+  DoisFatoresService,
+  exigidoPara,
+} from './dois-fatores.service';
 import { LoginDto } from './dtos/login.dto';
 import type { TipoToken } from './dtos/senha.dtos';
 import { SessoesService } from './sessoes.service';
@@ -75,7 +80,10 @@ export interface EscolherClinica {
   escolherClinica: ClinicaParaEscolher[];
 }
 
-export type ResultadoLogin = SessaoEmitida | EscolherClinica;
+export type ResultadoLogin =
+  | SessaoEmitida
+  | EscolherClinica
+  | DesafioDoisFatores;
 
 export type MotivoTokenInvalido = 'expirado' | 'usado' | 'invalido';
 
@@ -87,6 +95,8 @@ export type VerificacaoToken =
 interface LinhaAcesso {
   tenant_id: string;
   papel: string;
+  clinico: boolean;
+  exigir_2fa: boolean;
   codigo: string | null;
   nome: string | null;
 }
@@ -117,6 +127,7 @@ export class AuthService {
     private readonly mail: MailService,
     private readonly audit: AuditService,
     private readonly tentativas: TentativasService,
+    private readonly doisFatores: DoisFatoresService,
   ) {}
 
   /**
@@ -200,12 +211,45 @@ export class AuthService {
       };
     }
     const [l] = linhas;
+    // L-07: com 2FA (ou exigido pela clínica), falta o código do app.
+    const desafio = await this.doisFatores.desafioSeNecessario(usuario.id, {
+      produto: dto.produto,
+      tenantId: l.tenant_id,
+      exigido: exigidoPara(l.papel, l.clinico, l.exigir_2fa),
+    });
+    if (desafio) return desafio;
     return this.iniciarSessao(
       usuario,
       { produto: dto.produto, tenantId: l.tenant_id, papel: l.papel },
       'login',
       ctx,
     );
+  }
+
+  /**
+   * 2º passo do login (L-07): o código do app (ou de recuperação) contra o
+   * desafio da senha. Configurou agora → devolve também os códigos de
+   * recuperação.
+   */
+  async loginComCodigo(
+    desafio: string,
+    codigo: string,
+    ctx: ContextoAcesso = {},
+  ): Promise<SessaoEmitida & { codigosRecuperacao?: string[] }> {
+    const { claims, codigosRecuperacao } =
+      await this.doisFatores.validarDesafio(desafio, codigo, ctx);
+    const { usuario, acesso } = await this.exigirAcessoAtivo(claims);
+    const sessao = await this.iniciarSessao(
+      usuario,
+      {
+        produto: acesso.produto,
+        tenantId: acesso.tenantId,
+        papel: acesso.papel,
+      },
+      'login',
+      ctx,
+    );
+    return codigosRecuperacao ? { ...sessao, codigosRecuperacao } : sessao;
   }
 
   /** Emite a sessão de um acesso já autenticado e audita (login, signup, troca). */
@@ -630,7 +674,8 @@ export class AuthService {
     tenantId?: string,
   ): Promise<LinhaAcesso[]> {
     return this.acessos.query(
-      `SELECT a.tenant_id, a.papel, s.tenant_codigo AS codigo, s.tenant_nome AS nome
+      `SELECT a.tenant_id, a.papel, a.clinico, s.tenant_codigo AS codigo,
+              s.tenant_nome AS nome, coalesce(s.exigir_2fa, false) AS exigir_2fa
          FROM crommos.acessos a
          LEFT JOIN crommos.assinaturas s
            ON s.tenant_id = a.tenant_id AND s.produto = a.produto
