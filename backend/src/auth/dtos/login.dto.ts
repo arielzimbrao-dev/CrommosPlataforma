@@ -32,3 +32,17 @@ export class LoginDto {
   @Length(5, 36)
   tenantId?: string;
 }
+
+/** 2º passo do login com 2FA (L-07). */
+export class LoginCodigoDto {
+  @IsString()
+  @MinLength(10)
+  @MaxLength(4096)
+  desafio!: string;
+
+  /** 6 dígitos do app ou um código de recuperação (`XXXX-XXXX`). */
+  @IsString()
+  @MinLength(6)
+  @MaxLength(20)
+  codigo!: string;
+}

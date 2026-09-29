@@ -136,6 +136,16 @@ export class TentativasService {
     ]);
   }
 
+  /** `true` se `alvo` já tem `limite` usos na janela (só consulta; a contagem é o `permitir`). */
+  async esgotado(nome: string, alvo: string, limite: number): Promise<boolean> {
+    const [linha] = await this.ds.query<unknown[]>(
+      `SELECT 1 FROM ${TABELA}
+        WHERE chave = $1 AND janela_fim > now() AND hits >= $2`,
+      [`${nome}:${sha256(alvo)}`, limite],
+    );
+    return !!linha;
+  }
+
   /** Conta um uso de `alvo`; `false` = passou de `limite` na janela. */
   async permitir(
     nome: string,

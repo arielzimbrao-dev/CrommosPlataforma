@@ -7,6 +7,8 @@ import { DatabaseModule } from '../database/database.module';
 import { AcessoGuard } from './acesso.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { DoisFatoresController } from './dois-fatores.controller';
+import { DoisFatoresService } from './dois-fatores.service';
 import { normalizarPem } from './chaves-jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { JwtStrategy } from './jwt.strategy';
@@ -37,9 +39,10 @@ import { TentativasService } from './tentativas.service';
       }),
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, DoisFatoresController],
   providers: [
     AuthService,
+    DoisFatoresService,
     SessoesService,
     SessoesCron,
     TentativasService,

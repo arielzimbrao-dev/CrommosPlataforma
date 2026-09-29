@@ -36,4 +36,25 @@ export class ProvisionamentoClient {
       throw new Error(`provisionamento ${cfg.produto}: HTTP ${res.status}`);
     }
   }
+
+  /**
+   * L-29: a pessoa excluiu a conta; o produto anonimiza a cópia local de nome
+   * e e-mail. Idempotente no produto. Lança fora de 2xx (quem chama repete).
+   */
+  async anonimizarPessoa(cfg: ConfigProduto, usuarioId: string): Promise<void> {
+    const res = await fetch(
+      `${cfg.apiUrl}/interno/usuarios/${encodeURIComponent(usuarioId)}/anonimizar`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Servico-Key': cfg.chaveProvisionamento,
+          ...cabecalhoRequestId(),
+        },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`anonimizar ${cfg.produto}: HTTP ${res.status}`);
+    }
+  }
 }

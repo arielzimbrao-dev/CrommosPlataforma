@@ -37,6 +37,40 @@ export function mensagemConflito(exception: unknown): string | undefined {
 }
 
 /**
+ * QA-191 (como o QA-188/169 da clinic-api): o Nest converte o SyntaxError do
+ * body-parser (JSON malformado) e o URIError do Express (`%ZZ` num parâmetro)
+ * em `BadRequestException(err.message)` antes do filtro, e o texto padrão
+ * (inglês) do Nest, do throttler e do roteador sai sem mensagem própria.
+ */
+const TEXTO_PADRAO_NEST =
+  /^(ThrottlerException: )?Too Many Requests$|^Forbidden( resource)?$|^Unauthorized$|^Not Found$|^Cannot [A-Z]+ \S+$|^Conflict$|^Bad Request$|^Internal Server Error$|^Method Not Allowed$/i;
+const PADRAO_POR_STATUS: Record<number, string> = {
+  400: 'Dados inválidos. Revise os campos.',
+  401: 'Sessão expirada. Entre novamente.',
+  403: 'Você não tem permissão para esta ação.',
+  404: 'Registro não encontrado.',
+  409: 'Conflito com outro registro.',
+  429: 'Muitas tentativas. Aguarde alguns minutos e tente de novo.',
+  500: 'Erro interno do servidor',
+};
+
+function traduzirErroDoParser(message: unknown): unknown {
+  if (typeof message !== 'string') return message;
+  if (/^Failed to decode param /.test(message))
+    return 'Endereço inválido. Confira o link.';
+  if (/\bJSON\b/.test(message))
+    return 'Não foi possível ler os dados enviados. Tente de novo.';
+  return message;
+}
+
+function traduzirPadraoNest(status: number, message: unknown): unknown {
+  if (typeof message !== 'string' || !TEXTO_PADRAO_NEST.test(message))
+    return message;
+  if (/^Cannot [A-Z]+ /.test(message)) return 'Endereço não encontrado.';
+  return PADRAO_POR_STATUS[status] ?? 'Não foi possível concluir a operação.';
+}
+
+/**
  * Filtro global de exceções. Normaliza o corpo de erro retornado pela API.
  * - `HttpException`: preserva status e mensagem (erros de negócio esperados).
  * - Violação de UNIQUE/EXCLUDE do Postgres: 409 sem detalhe do banco (N-07).
@@ -68,7 +102,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
           ? corpo.message
           : corpo;
       // QA-007: mensagens padrão da validação (inglês) → pt-BR.
-      if (status === 400) message = traduzirValidacao(message);
+      if (status === 400)
+        message = traduzirErroDoParser(traduzirValidacao(message));
+      message = traduzirPadraoNest(status, message);
       // Código de erro de negócio (ex.: CONVITE_JA_ACEITO) para o front decidir.
       if (typeof corpo === 'object' && corpo !== null && 'code' in corpo) {
         code = (corpo as { code?: unknown }).code;
@@ -84,10 +120,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
+    // QA-191: resposta de erro nunca vai para cache.
+    response.setHeader('Cache-Control', 'no-store');
     response.status(status).send({
       statusCode: status,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      // Sem a query string (um segredo em `?token=` não volta no corpo).
+      path: request.url.split('?')[0],
       message,
       ...(code === undefined ? {} : { code }),
     });

@@ -206,6 +206,18 @@ export class EnvironmentVariables {
   @IsNotEmpty()
   ABACATEPAY_HMAC_KEY?: string;
 
+  /**
+   * Cifra do segredo do 2FA (L-07). Sem ela, ligar o 2FA responde 503 (nada
+   * vai em claro); o login de quem não usa 2FA segue normal.
+   */
+  @IsOptional()
+  @IsString()
+  @MinLength(32, {
+    message:
+      'DATA_ENCRYPTION_KEY deve ter ao menos 32 caracteres (`openssl rand -hex 32`).',
+  })
+  DATA_ENCRYPTION_KEY?: string;
+
   /** Baixa manual de fatura (`X-Plataforma-Key`). Sem ela, a rota é 404. */
   @IsOptional()
   @IsString()

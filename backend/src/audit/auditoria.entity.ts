@@ -32,6 +32,13 @@ export class Auditoria {
   @Column({ name: 'resource_id', type: 'varchar', nullable: true })
   resourceId!: string | null;
 
+  /** Registros de acesso (migration 12, Marco Civil): IP e navegador. */
+  @Column({ type: 'varchar', length: 45, nullable: true })
+  ip!: string | null;
+
+  @Column({ name: 'user_agent', type: 'varchar', length: 255, nullable: true })
+  userAgent!: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 }

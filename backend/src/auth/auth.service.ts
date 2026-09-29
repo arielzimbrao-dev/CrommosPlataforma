@@ -8,13 +8,22 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { IsNull, MoreThan, Repository } from 'typeorm';
-import { AuditService } from '../audit/audit.service';
+import {
+  AuditService,
+  ContextoAcesso,
+  RECURSO_ACESSO,
+} from '../audit/audit.service';
 import { Assinatura } from '../billing/assinatura.entity';
 import { sha256 } from '../common/crypto/segredo';
 import { ITokenPayload } from '../common/interfaces/token-payload.interface';
 import { configProduto, Produto } from '../common/produtos';
 import { MailService } from '../mail/mail.service';
 import { Acesso } from './acesso.entity';
+import {
+  DesafioDoisFatores,
+  DoisFatoresService,
+  exigidoPara,
+} from './dois-fatores.service';
 import { LoginDto } from './dtos/login.dto';
 import type { TipoToken } from './dtos/senha.dtos';
 import { SessoesService } from './sessoes.service';
@@ -71,7 +80,10 @@ export interface EscolherClinica {
   escolherClinica: ClinicaParaEscolher[];
 }
 
-export type ResultadoLogin = SessaoEmitida | EscolherClinica;
+export type ResultadoLogin =
+  | SessaoEmitida
+  | EscolherClinica
+  | DesafioDoisFatores;
 
 export type MotivoTokenInvalido = 'expirado' | 'usado' | 'invalido';
 
@@ -83,6 +95,8 @@ export type VerificacaoToken =
 interface LinhaAcesso {
   tenant_id: string;
   papel: string;
+  clinico: boolean;
+  exigir_2fa: boolean;
   codigo: string | null;
   nome: string | null;
 }
@@ -113,6 +127,7 @@ export class AuthService {
     private readonly mail: MailService,
     private readonly audit: AuditService,
     private readonly tentativas: TentativasService,
+    private readonly doisFatores: DoisFatoresService,
   ) {}
 
   /**
@@ -121,24 +136,51 @@ export class AuthService {
    * resposta de erro é sempre o mesmo 401 (e o bcrypt roda sempre), para não
    * revelar se o e-mail, o tenant ou o acesso existem.
    */
-  async login(dto: LoginDto, ip = ''): Promise<ResultadoLogin> {
+  async login(
+    dto: LoginDto,
+    ctx: ContextoAcesso = {},
+  ): Promise<ResultadoLogin> {
     exigirProdutoDisponivel(dto.produto);
     const email = normalizarEmail(dto.email);
+    const ip = ctx.ip ?? '';
     // QA-003: só as falhas contam (por IP + e-mail e por IP); 429 antes do bcrypt.
     await this.tentativas.exigirLoginLiberado(ip, email);
-    const r = await this.autenticar(dto, email).catch(async (e: unknown) => {
-      if (e instanceof UnauthorizedException) {
-        await this.tentativas.registrarFalhaLogin(ip, email);
-      }
-      throw e;
-    });
+    const r = await this.autenticar(dto, email, ctx).catch(
+      async (e: unknown) => {
+        if (e instanceof UnauthorizedException) {
+          await this.tentativas.registrarFalhaLogin(ip, email);
+          await this.registrarFalha(dto, email, ctx);
+        }
+        throw e;
+      },
+    );
     await this.tentativas.limparFalhasLogin(ip, email);
     return r;
+  }
+
+  /** L-24: falha de login com IP (e a pessoa, se o e-mail existe; nunca o e-mail). */
+  private async registrarFalha(
+    dto: LoginDto,
+    email: string,
+    ctx: ContextoAcesso,
+  ): Promise<void> {
+    const u = await this.usuarios.findOne({
+      where: { email },
+      select: { id: true },
+    });
+    await this.audit.registrar({
+      ...ctx,
+      usuarioId: u?.id ?? null,
+      produto: dto.produto,
+      action: 'login-falha',
+      resource: RECURSO_ACESSO,
+    });
   }
 
   private async autenticar(
     dto: LoginDto,
     email: string,
+    ctx: ContextoAcesso,
   ): Promise<ResultadoLogin> {
     const usuario = await this.usuarios.findOne({
       where: { email },
@@ -169,11 +211,45 @@ export class AuthService {
       };
     }
     const [l] = linhas;
+    // L-07: com 2FA (ou exigido pela clínica), falta o código do app.
+    const desafio = await this.doisFatores.desafioSeNecessario(usuario.id, {
+      produto: dto.produto,
+      tenantId: l.tenant_id,
+      exigido: exigidoPara(l.papel, l.clinico, l.exigir_2fa),
+    });
+    if (desafio) return desafio;
     return this.iniciarSessao(
       usuario,
       { produto: dto.produto, tenantId: l.tenant_id, papel: l.papel },
       'login',
+      ctx,
     );
+  }
+
+  /**
+   * 2º passo do login (L-07): o código do app (ou de recuperação) contra o
+   * desafio da senha. Configurou agora → devolve também os códigos de
+   * recuperação.
+   */
+  async loginComCodigo(
+    desafio: string,
+    codigo: string,
+    ctx: ContextoAcesso = {},
+  ): Promise<SessaoEmitida & { codigosRecuperacao?: string[] }> {
+    const { claims, codigosRecuperacao } =
+      await this.doisFatores.validarDesafio(desafio, codigo, ctx);
+    const { usuario, acesso } = await this.exigirAcessoAtivo(claims);
+    const sessao = await this.iniciarSessao(
+      usuario,
+      {
+        produto: acesso.produto,
+        tenantId: acesso.tenantId,
+        papel: acesso.papel,
+      },
+      'login',
+      ctx,
+    );
+    return codigosRecuperacao ? { ...sessao, codigosRecuperacao } : sessao;
   }
 
   /** Emite a sessão de um acesso já autenticado e audita (login, signup, troca). */
@@ -181,9 +257,11 @@ export class AuthService {
     usuario: Pick<Usuario, 'id' | 'nome' | 'email'>,
     acesso: AcessoView,
     action: string,
+    ctx: ContextoAcesso = {},
   ): Promise<SessaoEmitida> {
     const sessao = await this.abrirSessao(usuario, acesso);
     await this.audit.registrar({
+      ...ctx,
       usuarioId: usuario.id,
       produto: acesso.produto,
       tenantId: acesso.tenantId,
@@ -222,7 +300,10 @@ export class AuthService {
    * Rotaciona o refresh e devolve a sessão nova, com o papel atual. Sem acesso
    * ativo (desativado depois do login) → 401.
    */
-  async refresh(refreshToken: string): Promise<SessaoEmitida> {
+  async refresh(
+    refreshToken: string,
+    ctx: ContextoAcesso = {},
+  ): Promise<SessaoEmitida> {
     // QA-100: limite por sessão ANTES de consumir — o 429 não gasta o refresh
     const daSessao = await this.sessoes.familiaDo(refreshToken);
     if (
@@ -242,14 +323,30 @@ export class AuthService {
     const { claims, jtiNovo, familia } =
       await this.sessoes.consumir(refreshToken);
     const { usuario, acesso } = await this.exigirAcessoAtivo(claims);
-    return this.abrirSessao(usuario, acesso, { jti: jtiNovo, familia });
+    const sessao = await this.abrirSessao(usuario, acesso, {
+      jti: jtiNovo,
+      familia,
+    });
+    await this.audit.registrar({
+      ...ctx,
+      usuarioId: usuario.id,
+      produto: acesso.produto,
+      tenantId: acesso.tenantId,
+      action: 'refresh',
+      resource: RECURSO_ACESSO,
+    });
+    return sessao;
   }
 
   /** Logout pelo cookie: nunca falha; audita quando havia sessão vigente. */
-  async logout(refreshToken: string | undefined): Promise<void> {
+  async logout(
+    refreshToken: string | undefined,
+    ctx: ContextoAcesso = {},
+  ): Promise<void> {
     const p = await this.sessoes.encerrar(refreshToken);
     if (!p) return;
     await this.audit.registrar({
+      ...ctx,
       usuarioId: p.sub,
       produto: p.produto,
       tenantId: p.tenantId,
@@ -341,6 +438,7 @@ export class AuthService {
     user: ITokenPayload,
     senhaAtual: string,
     novaSenha: string,
+    ctx: ContextoAcesso = {},
   ): Promise<SessaoEmitida> {
     const atual = await this.usuarios.findOne({
       where: { id: user.sub },
@@ -355,7 +453,7 @@ export class AuthService {
       { passwordHash: await hashSenha(novaSenha) },
     );
     await this.sessoes.revogarDaPessoa(usuario.id);
-    return this.iniciarSessao(usuario, acesso, 'trocar-senha');
+    return this.iniciarSessao(usuario, acesso, 'trocar-senha', ctx);
   }
 
   /**
@@ -576,7 +674,8 @@ export class AuthService {
     tenantId?: string,
   ): Promise<LinhaAcesso[]> {
     return this.acessos.query(
-      `SELECT a.tenant_id, a.papel, s.tenant_codigo AS codigo, s.tenant_nome AS nome
+      `SELECT a.tenant_id, a.papel, a.clinico, s.tenant_codigo AS codigo,
+              s.tenant_nome AS nome, coalesce(s.exigir_2fa, false) AS exigir_2fa
          FROM crommos.acessos a
          LEFT JOIN crommos.assinaturas s
            ON s.tenant_id = a.tenant_id AND s.produto = a.produto

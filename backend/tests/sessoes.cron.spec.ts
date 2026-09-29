@@ -29,8 +29,14 @@ describe('SessoesCron', () => {
       .fn()
       .mockResolvedValueOnce(0)
       .mockResolvedValueOnce(2);
+    const purgarRegistrosAcesso = jest
+      .fn()
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(3);
     const { ds, query } = fakeDs(true);
-    const cron = new SessoesCron({ limparVencidas } as never, ds);
+    const cron = new SessoesCron({ limparVencidas } as never, ds, {
+      purgarRegistrosAcesso,
+    } as never);
 
     await cron.run();
     expect(log).not.toHaveBeenCalled();
@@ -41,11 +47,17 @@ describe('SessoesCron', () => {
 
     await cron.run();
     expect(log).toHaveBeenCalledWith('Sessões vencidas removidas: 2');
+    // L-24: a purga dos registros de acesso vai no mesmo job.
+    expect(log).toHaveBeenCalledWith('Registros de acesso além da retenção: 3');
   });
 
   it('não limpa quando outra réplica detém o lock', async () => {
     const limparVencidas = jest.fn();
-    const cron = new SessoesCron({ limparVencidas } as never, fakeDs(false).ds);
+    const cron = new SessoesCron(
+      { limparVencidas } as never,
+      fakeDs(false).ds,
+      {} as never,
+    );
     await cron.run();
     expect(limparVencidas).not.toHaveBeenCalled();
   });

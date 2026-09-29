@@ -19,16 +19,22 @@ describe('AllExceptionsFilter', () => {
   function buildHost(
     url: string,
     method = 'GET',
-  ): { host: ArgumentsHost; send: jest.Mock; status: jest.Mock } {
+  ): {
+    host: ArgumentsHost;
+    send: jest.Mock;
+    status: jest.Mock;
+    setHeader: jest.Mock;
+  } {
     const send = jest.fn();
     const status = jest.fn().mockReturnValue({ send });
+    const setHeader = jest.fn();
     const host = {
       switchToHttp: () => ({
-        getResponse: () => ({ status }),
+        getResponse: () => ({ status, setHeader }),
         getRequest: () => ({ url, method }),
       }),
     } as unknown as ArgumentsHost;
-    return { host, send, status };
+    return { host, send, status, setHeader };
   }
 
   it('serializes a thrown HttpException into the standard error body', () => {
@@ -155,5 +161,58 @@ describe('AllExceptionsFilter', () => {
 
     expect(status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
     expect(send.mock.calls[0][0].message).toBe('Erro interno do servidor');
+  });
+
+  describe('QA-191: texto do parser e do roteador em pt-BR, sem cache', () => {
+    it.each([
+      [
+        'Unexpected end of JSON input',
+        'Não foi possível ler os dados enviados. Tente de novo.',
+      ],
+      [
+        'Expected double-quoted property name in JSON at position 11 (line 1 column 12)',
+        'Não foi possível ler os dados enviados. Tente de novo.',
+      ],
+      ["Failed to decode param '%ZZ'", 'Endereço inválido. Confira o link.'],
+    ])('400 "%s"', (original, esperado) => {
+      const { host, send, setHeader } = buildHost('/auth/login', 'POST');
+      filter.catch(new BadRequestException(original), host);
+      expect(send.mock.calls[0][0].message).toBe(esperado);
+      expect(setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    });
+
+    it('404 do roteador ("Cannot GET /x") vira "Endereço não encontrado."', () => {
+      const { host, send } = buildHost('/convites/%ZZ');
+      filter.catch(
+        new HttpException('Cannot GET /convites/%ZZ', HttpStatus.NOT_FOUND),
+        host,
+      );
+      expect(send.mock.calls[0][0].message).toBe('Endereço não encontrado.');
+    });
+
+    it('texto padrão do Nest vira pt-BR pelo status; mensagem própria fica', () => {
+      const a = buildHost('/x');
+      filter.catch(new HttpException('Forbidden resource', 403), a.host);
+      expect(a.send.mock.calls[0][0].message).toBe(
+        'Você não tem permissão para esta ação.',
+      );
+      const b = buildHost('/x');
+      filter.catch(new HttpException('Too Many Requests', 429), b.host);
+      expect(b.send.mock.calls[0][0].message).toBe(
+        'Muitas tentativas. Aguarde alguns minutos e tente de novo.',
+      );
+      const c = buildHost('/x');
+      filter.catch(new HttpException('I am a teapot', 418), c.host);
+      expect(c.send.mock.calls[0][0].message).toBe('I am a teapot');
+      const d = buildHost('/x');
+      filter.catch(new HttpException('Bad Gateway', 502), d.host);
+      expect(d.send.mock.calls[0][0].message).toBe('Bad Gateway');
+    });
+
+    it('não devolve a query string no path', () => {
+      const { host, send } = buildHost('/auth/verificar-token?token=segredo');
+      filter.catch(new HttpException('x', 400), host);
+      expect(send.mock.calls[0][0].path).toBe('/auth/verificar-token');
+    });
   });
 });
