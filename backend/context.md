@@ -108,3 +108,7 @@ npm ci && npm run start:dev
 - **Registros de acesso (L-24, migration 12):** `auditoria.ip`/`user_agent` em login, `login-falha`,
   `refresh`, `trocar-senha`, `logout` e `2fa-*` (`resource = 'auth'`). Purga no `SessoesCron` pela
   `RETENCAO_REGISTROS_ACESSO_DIAS` (365, proposta). `GET /auth/acessos` (admin, 90 dias).
+- **Exclusão propagada (L-29, migration 14):** `POST /conta/excluir` grava em
+  `usuarios.exclusao_pendente` os produtos em que a pessoa tinha acesso e chama
+  `POST {produto}/interno/usuarios/:id/anonimizar` (nome/e-mail da cópia local). Falhou (produto
+  fora) → fica pendente; `ContaService.cronExclusoes` tenta de novo a cada 10 min (lock global).

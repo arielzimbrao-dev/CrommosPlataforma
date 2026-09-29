@@ -3,14 +3,22 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { DataSource } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { PAPEL_ADMIN } from '../auth/decorators/exige-acesso.decorator';
 import { SessoesService } from '../auth/sessoes.service';
 import { conferirSenha, senhaDescartavel } from '../auth/tokens';
 import { Usuario } from '../auth/usuario.entity';
+import { comLockGlobal } from '../common/lock-global';
+import { configProduto, type Produto } from '../common/produtos';
+import { ProvisionamentoClient } from '../signup/provisionamento.client';
+
+/** Exclusões re-tentadas por rodada do job; o resto fica para a próxima. */
+const LOTE_EXCLUSOES = 100;
 
 /** Dados da pessoa guardados pela plataforma (LGPD art. 18, II e V). */
 export interface ExportacaoConta {
@@ -64,10 +72,13 @@ export interface ExportacaoConta {
  */
 @Injectable()
 export class ContaService {
+  private readonly logger = new Logger(ContaService.name);
+
   constructor(
     @Inject('DATA_SOURCE') private readonly ds: DataSource,
     private readonly sessoes: SessoesService,
     private readonly audit: AuditService,
+    private readonly produtos: ProvisionamentoClient,
   ) {}
 
   async exportar(usuarioId: string): Promise<ExportacaoConta> {
@@ -167,6 +178,10 @@ export class ContaService {
             SET email = $2, nome = 'Conta excluída', password_hash = $3,
                 password_reset_token_hash = NULL, password_reset_expires_at = NULL,
                 email_confirmacao_hash = NULL, email_confirmacao_expira_em = NULL,
+                totp_segredo = NULL, totp_ativo_em = NULL, totp_recuperacao = NULL,
+                exclusao_pendente = coalesce((
+                  SELECT array_agg(DISTINCT produto) FROM crommos.acessos
+                   WHERE usuario_id = $1), '{}'),
                 deleted_at = now(), updated_at = now()
           WHERE id = $1`,
         [usuarioId, `excluida-${usuarioId}@anonimizado.invalid`, descartavel],
@@ -174,6 +189,59 @@ export class ContaService {
     });
     await this.sessoes.revogarDaPessoa(usuarioId);
     await this.registrar(usuarioId, 'excluir-conta');
+    // L-29: a cópia de nome/e-mail nos produtos; falhou → o job repete.
+    await this.propagarExclusao(usuarioId);
+  }
+
+  /** L-29: re-tenta as exclusões pendentes nos produtos (uma réplica por vez). */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async cronExclusoes(): Promise<void> {
+    const n = await comLockGlobal(this.ds, 'plataforma-exclusoes', () =>
+      this.reenviarExclusoes(),
+    );
+    if (n) this.logger.log(`Exclusões de conta propagadas: ${n}`);
+  }
+
+  /** Devolve quantas pessoas ficaram sem pendência nesta rodada. */
+  async reenviarExclusoes(): Promise<number> {
+    const linhas = await this.ds.query<{ id: string }[]>(
+      `SELECT id FROM crommos.usuarios
+        WHERE cardinality(exclusao_pendente) > 0 LIMIT $1`,
+      [LOTE_EXCLUSOES],
+    );
+    let feitas = 0;
+    for (const { id } of linhas) {
+      if (await this.propagarExclusao(id)) feitas++;
+    }
+    return feitas;
+  }
+
+  /** Pede a cada produto pendente que anonimize; `true` = nada mais pendente. */
+  private async propagarExclusao(usuarioId: string): Promise<boolean> {
+    const [u] = await this.ds.query<{ pendente: Produto[] | null }[]>(
+      'SELECT exclusao_pendente AS pendente FROM crommos.usuarios WHERE id = $1',
+      [usuarioId],
+    );
+    let resta = 0;
+    for (const produto of u?.pendente ?? []) {
+      const cfg = configProduto(produto);
+      try {
+        if (!cfg) throw new Error(`produto ${produto} sem API configurada`);
+        await this.produtos.anonimizarPessoa(cfg, usuarioId);
+        await this.ds.query(
+          `UPDATE crommos.usuarios
+              SET exclusao_pendente = array_remove(exclusao_pendente, $2)
+            WHERE id = $1`,
+          [usuarioId, produto],
+        );
+      } catch (e) {
+        resta++;
+        this.logger.warn(
+          `Exclusão da conta ainda não propagada (${produto}): ${(e as Error).message}`,
+        );
+      }
+    }
+    return resta === 0;
   }
 
   private registrar(usuarioId: string, action: string): Promise<void> {

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { DatabaseModule } from '../database/database.module';
+import { ProvisionamentoClient } from '../signup/provisionamento.client';
 import { ContaController } from './conta.controller';
 import { ContaService } from './conta.service';
 
@@ -8,6 +9,6 @@ import { ContaService } from './conta.service';
 @Module({
   imports: [DatabaseModule, AuthModule],
   controllers: [ContaController],
-  providers: [ContaService],
+  providers: [ContaService, ProvisionamentoClient],
 })
 export class ContaModule {}
