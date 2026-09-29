@@ -147,7 +147,8 @@ export class DoisFatoresService {
     const t = await this.linha(c.sub);
     const ok = await this.conferir(c.sub, codigo, t.ativo, ctx, claims);
     if (!ok) {
-      throw new UnauthorizedException(
+      // 400: o 401 fica para o desafio vencido (o front diz "entre de novo").
+      throw new BadRequestException(
         'Código incorreto. Confira o app autenticador e tente de novo.',
       );
     }

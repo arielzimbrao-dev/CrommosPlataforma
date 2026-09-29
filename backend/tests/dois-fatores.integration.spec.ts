@@ -139,21 +139,21 @@ describeDb('Verificação em duas etapas (integração)', () => {
       .expect(409);
   });
 
-  it('login em dois passos: senha → desafio (sem sessão); código certo → sessão; o mesmo código de novo → 401', async () => {
+  it('login em dois passos: senha → desafio (sem sessão); código certo → sessão; o mesmo código de novo → 400', async () => {
     const r1 = await login('ana').expect(200);
     expect(r1.body.accessToken).toBeUndefined();
     expect(r1.headers['set-cookie']).toBeUndefined();
     const desafio = r1.body.doisFatores.desafio as string;
     expect(r1.body.doisFatores.configurar).toBeUndefined();
 
-    await codigo(desafio, '123456').expect(401);
+    await codigo(desafio, '123456').expect(400);
     const c = await proximoCodigo('ana');
     const r2 = await codigo(desafio, c).expect(200);
     expect(r2.body.accessToken).toBeDefined();
     expect(cookieRefresh(r2.headers)).toContain('crommos_rt=');
     expect(r2.body.codigosRecuperacao).toBeUndefined();
 
-    await codigo(desafio, c).expect(401);
+    await codigo(desafio, c).expect(400); // já usado
     await codigo('desafio-invalido', await proximoCodigo('ana')).expect(401);
   });
 
@@ -162,7 +162,7 @@ describeDb('Verificação em duas etapas (integração)', () => {
       .desafio as string;
     const rec = ` ${recuperacao[0].toLowerCase()} `;
     await codigo(d, rec).expect(200);
-    await codigo(d, rec).expect(401);
+    await codigo(d, rec).expect(400);
     const auth = await (async () => {
       const d2 = (await login('ana')).body.doisFatores.desafio as string;
       const r = await codigo(d2, recuperacao[1]).expect(200);
@@ -184,7 +184,7 @@ describeDb('Verificação em duas etapas (integração)', () => {
       .send({ codigo: await proximoCodigo('lim') })
       .expect(201);
     const d = (await login('lim')).body.doisFatores.desafio as string;
-    for (let i = 0; i < 5; i++) await codigo(d, '000000').expect(401);
+    for (let i = 0; i < 5; i++) await codigo(d, '000000').expect(400);
     await codigo(d, await proximoCodigo('lim')).expect(429);
   });
 
