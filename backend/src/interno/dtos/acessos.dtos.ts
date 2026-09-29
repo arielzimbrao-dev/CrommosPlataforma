@@ -27,6 +27,11 @@ export class CriarAcessoDto {
 
   @Matches(PAPEL, { message: MENSAGEM_PAPEL })
   papel!: string;
+
+  /** Vinculado a profissional de saúde (assento nos módulos clínicos). */
+  @IsOptional()
+  @IsBoolean()
+  clinico?: boolean;
 }
 
 export class AtualizarAcessoDto {
@@ -40,10 +45,15 @@ export class AtualizarAcessoDto {
   @Matches(PAPEL, { message: MENSAGEM_PAPEL })
   papel?: string;
 
-  /** `false` desativa (revoga as sessões no tenant); `true` reativa (limite). */
+  /** `false` desativa (revoga as sessões no tenant); `true` reativa. */
   @IsOptional()
   @IsBoolean()
   ativo?: boolean;
+
+  /** Vinculado a profissional de saúde (assento nos módulos clínicos). */
+  @IsOptional()
+  @IsBoolean()
+  clinico?: boolean;
 }
 
 export class ReenviarConviteDto {

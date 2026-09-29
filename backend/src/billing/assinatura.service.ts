@@ -20,11 +20,19 @@ import { Assinatura } from './assinatura.entity';
 import { SimularDto, UpdateAssinaturaDto } from './dtos/billing.dtos';
 import { Fatura } from './fatura.entity';
 import {
+  Assentos,
+  FAIXAS,
+  Faixa,
+  ItemAssinatura,
   MODULES,
   MODULE_CODES,
   ModuleCode,
+  PessoaAcesso,
   PlanoPeriodo,
   calcularValor,
+  contarAssentos,
+  faixaDe,
+  itensDe,
 } from './modules.catalog';
 import {
   AjusteProRata,
@@ -54,11 +62,16 @@ export interface Ator {
 
 export interface AssinaturaView {
   modulosAtivos: ModuleCode[];
+  /** Pessoas com acesso ativo (convites inclusos): define a faixa. */
   numeroUsuarios: number;
   plano: PlanoPeriodo;
   /** R$/mês (fórmula de docs/03-precificacao.md). */
   valor: number;
   catalogo: typeof MODULES;
+  /** Assentos (pessoas com acesso) e preço na faixa de cada módulo. */
+  itens: ItemAssinatura[];
+  faixa: Faixa;
+  faixas: typeof FAIXAS;
   ciclo: { inicio: string; fim: string } | null;
   emTrialAte: string | null;
   emTrial: boolean;
@@ -110,18 +123,21 @@ export interface NovoTrial {
   tenantCodigo: string;
 }
 
-/** Usuários do trial (sem cobrança): a equipe avalia junto (QA-009). */
-export const USUARIOS_TRIAL = 5;
-
-/** Acessos que ocupam vaga: ativos (convites pendentes são ativos). */
-export function contarAcessosAtivos(
+/**
+ * Assentos do tenant, derivados dos acessos **ativos** (convite pendente
+ * incluso: a pessoa já foi chamada) — `mais` simula pessoas a mais.
+ */
+export async function assentosDoTenant(
   em: EntityManager,
   produto: Produto,
   tenantId: string,
-): Promise<number> {
-  return em
-    .getRepository(Acesso)
-    .count({ where: { produto, tenantId, ativo: true } });
+  mais: PessoaAcesso[] = [],
+): Promise<Assentos> {
+  const pessoas = await em.getRepository(Acesso).find({
+    where: { produto, tenantId, ativo: true },
+    select: { id: true, papel: true, clinico: true },
+  });
+  return contarAssentos([...pessoas, ...mais]);
 }
 
 /**
@@ -142,8 +158,8 @@ export class AssinaturaService {
   ) {}
 
   /**
-   * Assinatura em **trial** (signup): todos os módulos, `USUARIOS_TRIAL`
-   * usuários (a equipe testa junto — QA-009), mensal; o
+   * Assinatura em **trial** (signup): todos os módulos, sem limite de pessoas
+   * (a equipe testa junto — QA-009), mensal; o
    * ciclo do trial vai de hoje a hoje + `dias` e a renovação abre o 1º ciclo
    * pago. Recebe o `EntityManager` da transação do signup.
    */
@@ -159,7 +175,6 @@ export class AssinaturaService {
       repo.create({
         ...t,
         modulosAtivos: [...MODULE_CODES],
-        numeroUsuarios: USUARIOS_TRIAL,
         plano: PlanoPeriodo.Mensal,
         cicloInicio: hoje,
         cicloFim: fim,
@@ -175,12 +190,23 @@ export class AssinaturaService {
     });
   }
 
+  private assentos(
+    ator: Pick<Ator, 'produto' | 'tenantId'>,
+    mais?: PessoaAcesso[],
+  ) {
+    return assentosDoTenant(this.ds.manager, ator.produto, ator.tenantId, mais);
+  }
+
   async getCurrent(ator: Ator, hoje = hojeISO()): Promise<AssinaturaView> {
-    const a = await this.buscar(ator);
-    if (a) return this.view(a, hoje, await this.faturaVencida(a, hoje));
+    const [a, assentos] = await Promise.all([
+      this.buscar(ator),
+      this.assentos(ator),
+    ]);
+    if (a)
+      return this.view(a, assentos, hoje, await this.faturaVencida(a, hoje));
     // Sem assinatura: fail-closed (nenhum módulo), como no gating (B5).
     return {
-      ...this.valores([], 1, PlanoPeriodo.Mensal),
+      ...this.valores([], assentos, PlanoPeriodo.Mensal),
       ciclo: null,
       emTrialAte: null,
       emTrial: false,
@@ -244,7 +270,8 @@ export class AssinaturaService {
   /**
    * Valor da configuração simulada + o pró-rata que a mudança geraria hoje.
    * Numa redução, `reducao` diz quanto abate das faturas pendentes do ciclo e
-   * quanto vira crédito — mesma regra do `upsert`.
+   * quanto vira crédito — mesma regra do `upsert`. `adicionar` simula uma
+   * pessoa a mais (convite/ativação); `valorAtual` é o de hoje.
    */
   async simular(
     ator: Ator,
@@ -252,16 +279,35 @@ export class AssinaturaService {
     hoje = hojeISO(),
   ): Promise<{
     valor: number;
+    valorAtual: number;
+    numeroUsuarios: number;
+    itens: ItemAssinatura[];
+    faixa: Faixa;
     ajuste: AjusteProRata | null;
     reducao: { abatidoEmPendentes: number; credito: number } | null;
     primeiraFatura: PrimeiraFatura | null;
   }> {
-    const valor = calcularValor(dto.modulos, dto.numeroUsuarios, dto.plano);
-    const a = await this.buscar(ator);
-    const ajuste = a ? this.proRata(a, valor, hoje) : null;
+    const [a, atuais] = await Promise.all([
+      this.buscar(ator),
+      this.assentos(ator),
+    ]);
+    const assentos = dto.adicionar
+      ? await this.assentos(ator, [
+          { papel: dto.adicionar.papel, clinico: !!dto.adicionar.clinico },
+        ])
+      : atuais;
+    const valor = calcularValor(dto.modulos, assentos, dto.plano);
+    const base = {
+      valor,
+      valorAtual: a ? calcularValor(a.modulosAtivos, atuais, a.plano) : 0,
+      numeroUsuarios: assentos.pessoas,
+      itens: itensDe(assentos),
+      faixa: faixaDe(assentos.pessoas),
+    };
+    const ajuste = a ? this.proRata(a, atuais, valor, hoje) : null;
     const primeiraFatura = this.primeiraFatura(a, valor, dto.plano, hoje);
     if (!a || ajuste?.tipo !== 'credito') {
-      return { valor, ajuste, reducao: null, primeiraFatura };
+      return { ...base, ajuste, reducao: null, primeiraFatura };
     }
     const pendentes = await this.faturas.find({
       where: {
@@ -275,7 +321,7 @@ export class AssinaturaService {
     const r = abaterReducao(ajuste.valor, pendentes);
     const abatido = r.faturas.reduce((s, f) => s + centavos(f.abatido), 0);
     return {
-      valor,
+      ...base,
       ajuste,
       reducao: { abatidoEmPendentes: abatido / 100, credito: r.credito },
       primeiraFatura,
@@ -311,11 +357,10 @@ export class AssinaturaService {
   }
 
   /**
-   * Altera módulos/usuários/plano numa transação com a linha travada (a mesma
-   * trava do convite/reativação — limite de usuários): upgrade → fatura
-   * complementar (abatendo crédito); redução → abate as faturas pendentes do
-   * ciclo e só o excedente vira crédito. Sem assinatura, cria e fatura o 1º
-   * ciclo. Não aceita menos usuários que os acessos ativos (convites inclusos).
+   * Altera módulos/plano numa transação com a linha travada (a mesma trava
+   * dos acessos): upgrade → fatura complementar (abatendo crédito); redução →
+   * abate as faturas pendentes do ciclo e só o excedente vira crédito. Sem
+   * assinatura, cria e fatura o 1º ciclo. Os assentos vêm dos acessos.
    */
   async upsert(
     ator: Ator,
@@ -331,20 +376,10 @@ export class AssinaturaService {
       });
       // Merge explícito: campos ausentes chegam como `undefined` no DTO.
       const modulosAtivos = dto.modulosAtivos ?? atual?.modulosAtivos ?? [];
-      const numeroUsuarios = dto.numeroUsuarios ?? atual?.numeroUsuarios ?? 1;
       const plano = dto.plano ?? atual?.plano ?? PlanoPeriodo.Mensal;
-      const valorNovo = calcularValor(modulosAtivos, numeroUsuarios, plano);
-
-      // Só confere na criação ou na redução (não trava tenant legado acima
-      // do limite que mexe só nos módulos).
-      if (numeroUsuarios < (atual?.numeroUsuarios ?? Infinity)) {
-        const ativos = await contarAcessosAtivos(em, produto, tenantId);
-        if (numeroUsuarios < ativos) {
-          throw new ConflictException(
-            `A clínica tem ${ativos} usuário(s) ativo(s) ou convidado(s): desative usuários antes de reduzir para ${numeroUsuarios}.`,
-          );
-        }
-      }
+      const assentos = await assentosDoTenant(em, produto, tenantId);
+      const valorNovo = calcularValor(modulosAtivos, assentos, plano);
+      const numeroUsuarios = assentos.pessoas;
 
       if (!atual) {
         const ciclo = renovarCiclo({
@@ -389,7 +424,7 @@ export class AssinaturaService {
       if (atual.emTrialAte && !atual.trialConfirmadoEm) {
         atual.trialConfirmadoEm = new Date();
       }
-      const ajuste = this.proRata(atual, valorNovo, hoje);
+      const ajuste = this.proRata(atual, assentos, valorNovo, hoje);
       atual.modulosAtivos = modulosAtivos;
       atual.numeroUsuarios = numeroUsuarios;
       atual.plano = plano;
@@ -417,37 +452,14 @@ export class AssinaturaService {
           itens: { motivo: 'fim-trial', modulosAtivos, numeroUsuarios, plano },
           createdBy: usuarioId,
         });
-      } else if (ajuste.tipo === 'credito') {
-        const credito = await this.abaterPendentes(
-          em,
-          atual,
-          ajuste.valor,
-          hoje,
-          usuarioId,
-        );
-        abatidas = credito.abatidas;
-        atual.saldoCredito =
-          (centavos(atual.saldoCredito) + centavos(credito.valor)) / 100;
-      } else if (ajuste.tipo === 'complementar') {
-        const c = aplicarCredito(ajuste.valor, atual.saldoCredito);
-        atual.saldoCredito = c.saldoRestante;
-        fatura = await this.gravarFatura(em, atual, {
-          tipo: 'complementar',
-          periodoInicio: hoje,
-          periodoFim: atual.cicloFim,
-          valorBruto: ajuste.valor,
-          creditoAplicado: c.creditoAplicado,
-          valorLiquido: c.valorLiquido,
-          vencimento: hoje,
-          itens: {
-            motivo: 'pro-rata',
-            ajuste,
-            modulosAtivos,
-            numeroUsuarios,
-            plano,
-          },
-          createdBy: usuarioId,
+      } else {
+        const r = await this.aplicarAjuste(em, atual, ajuste, hoje, usuarioId, {
+          modulosAtivos,
+          numeroUsuarios,
+          plano,
         });
+        fatura = r.fatura;
+        abatidas = r.abatidas;
       }
       const a = await assinaturas.save(atual);
       return { a, ajuste, fatura, abatidas };
@@ -466,10 +478,114 @@ export class AssinaturaService {
       );
     }
     return {
-      ...this.view(r.a, hoje, await this.faturaVencida(r.a, hoje)),
+      ...this.view(
+        r.a,
+        await this.assentos(ator),
+        hoje,
+        await this.faturaVencida(r.a, hoje),
+      ),
       ajuste: r.ajuste,
       fatura: r.fatura,
     };
+  }
+
+  /**
+   * Pró-rata de um mid-ciclo já decidido: complementar (abatendo o crédito)
+   * ou redução (abate as pendentes do ciclo; o excedente vira crédito).
+   * Altera `a` (saldo) sem salvar.
+   */
+  private async aplicarAjuste(
+    em: EntityManager,
+    a: Assinatura,
+    ajuste: AjusteProRata,
+    hoje: string,
+    usuarioId: string | undefined,
+    itens: Record<string, unknown>,
+  ): Promise<{ fatura: Fatura | null; abatidas: Fatura[] }> {
+    if (ajuste.tipo === 'credito') {
+      const credito = await this.abaterPendentes(
+        em,
+        a,
+        ajuste.valor,
+        hoje,
+        usuarioId,
+      );
+      a.saldoCredito =
+        (centavos(a.saldoCredito) + centavos(credito.valor)) / 100;
+      return { fatura: null, abatidas: credito.abatidas };
+    }
+    if (ajuste.tipo !== 'complementar') return { fatura: null, abatidas: [] };
+    const c = aplicarCredito(ajuste.valor, a.saldoCredito);
+    a.saldoCredito = c.saldoRestante;
+    const fatura = await this.gravarFatura(em, a, {
+      tipo: 'complementar',
+      periodoInicio: hoje,
+      periodoFim: a.cicloFim,
+      valorBruto: ajuste.valor,
+      creditoAplicado: c.creditoAplicado,
+      valorLiquido: c.valorLiquido,
+      vencimento: hoje,
+      itens: { motivo: 'pro-rata', ajuste, ...itens },
+      createdBy: usuarioId,
+    });
+    return { fatura, abatidas: [] };
+  }
+
+  /**
+   * Acesso criado/alterado/removido (API interna): trava a assinatura, grava
+   * e cobra a diferença de assentos no pró-rata (complementar ou crédito),
+   * como uma mudança de módulos. Sem assinatura (legado): só grava.
+   */
+  async comReprecificacao<R>(
+    produto: Produto,
+    tenantId: string,
+    gravar: (em: EntityManager) => Promise<R>,
+    hoje = hojeISO(),
+  ): Promise<R> {
+    const r = await this.ds.transaction(async (em) => {
+      const assinaturas = em.getRepository(Assinatura);
+      const a = await assinaturas.findOne({
+        where: { produto, tenantId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!a) return { valor: await gravar(em), fatura: null, abatidas: [] };
+      const antes = await assentosDoTenant(em, produto, tenantId);
+      const valor = await gravar(em);
+      const depois = await assentosDoTenant(em, produto, tenantId);
+      const ajuste = calcularProRata({
+        cicloInicio: a.cicloInicio,
+        cicloFim: a.cicloFim,
+        emTrialAte: a.emTrialAte,
+        hoje,
+        valorMensalAnterior: calcularValor(a.modulosAtivos, antes, a.plano),
+        valorMensalNovo: calcularValor(a.modulosAtivos, depois, a.plano),
+      });
+      const aj = await this.aplicarAjuste(em, a, ajuste, hoje, undefined, {
+        motivo: 'assentos',
+        modulosAtivos: a.modulosAtivos,
+        numeroUsuarios: depois.pessoas,
+        assentos: depois.porModulo,
+        plano: a.plano,
+      });
+      a.numeroUsuarios = depois.pessoas;
+      await assinaturas.save(a);
+      return { valor, ...aj };
+    });
+    if (r.abatidas.length) await this.atualizarInadimplencia(hoje, tenantId);
+    // Ator = o produto (serviço), como a auditoria dos acessos.
+    const auditar = (action: string, id: string) =>
+      this.audit.registrar({
+        produto,
+        tenantId,
+        action,
+        resource: 'fatura',
+        resourceId: id,
+      });
+    if (r.fatura) await auditar('create', r.fatura.id);
+    for (const f of r.abatidas) {
+      await auditar(f.status === 'cancelada' ? 'cancelar' : 'reduzir', f.id);
+    }
+    return r.valor;
   }
 
   /**
@@ -586,15 +702,19 @@ export class AssinaturaService {
           lock: { mode: 'pessimistic_write' },
         });
         let n = 0;
+        // Assentos de hoje (os de ciclos atrasados não ficam guardados).
+        const assentos =
+          a && (await assentosDoTenant(em, a.produto, a.tenantId));
         // Trial sem confirmação não fatura: a clínica fica em modo leitura.
         // ponytail: esses tenants voltam na varredura todo dia; filtre no SQL
         // se forem muitos.
-        while (a && a.cicloFim <= hoje && !trialExpirado(a, a.cicloFim)) {
-          const valorMensal = calcularValor(
-            a.modulosAtivos,
-            a.numeroUsuarios,
-            a.plano,
-          );
+        while (
+          a &&
+          assentos &&
+          a.cicloFim <= hoje &&
+          !trialExpirado(a, a.cicloFim)
+        ) {
+          const valorMensal = calcularValor(a.modulosAtivos, assentos, a.plano);
           const r = renovarCiclo({
             cicloFim: a.cicloFim,
             plano: a.plano,
@@ -612,7 +732,8 @@ export class AssinaturaService {
             itens: {
               motivo: 'renovacao',
               modulosAtivos: a.modulosAtivos,
-              numeroUsuarios: a.numeroUsuarios,
+              numeroUsuarios: assentos.pessoas,
+              assentos: assentos.porModulo,
               plano: a.plano,
               valorMensal,
             },
@@ -620,6 +741,7 @@ export class AssinaturaService {
           a.cicloInicio = r.cicloInicio;
           a.cicloFim = r.cicloFim;
           a.saldoCredito = r.saldoCredito;
+          a.numeroUsuarios = assentos.pessoas;
           n++;
         }
         if (a && n > 0) await assinaturas.save(a);
@@ -629,17 +751,19 @@ export class AssinaturaService {
     return geradas;
   }
 
-  private proRata(a: Assinatura, valorNovo: number, hoje: string) {
+  /** Pró-rata de trocar módulos/plano com os mesmos assentos. */
+  private proRata(
+    a: Assinatura,
+    assentos: Assentos,
+    valorNovo: number,
+    hoje: string,
+  ) {
     return calcularProRata({
       cicloInicio: a.cicloInicio,
       cicloFim: a.cicloFim,
       emTrialAte: a.emTrialAte,
       hoje,
-      valorMensalAnterior: calcularValor(
-        a.modulosAtivos,
-        a.numeroUsuarios,
-        a.plano,
-      ),
+      valorMensalAnterior: calcularValor(a.modulosAtivos, assentos, a.plano),
       valorMensalNovo: valorNovo,
     });
   }
@@ -653,7 +777,7 @@ export class AssinaturaService {
     a: Assinatura,
     reducao: number,
     hoje: string,
-    usuarioId: string,
+    usuarioId: string | undefined,
   ): Promise<{ valor: number; abatidas: Fatura[] }> {
     const repo = em.getRepository(Fatura);
     const pendentes = await repo.find({
@@ -737,25 +861,29 @@ export class AssinaturaService {
 
   private valores(
     modulosAtivos: ModuleCode[],
-    numeroUsuarios: number,
+    assentos: Assentos,
     plano: PlanoPeriodo,
   ) {
     return {
       modulosAtivos,
-      numeroUsuarios,
+      numeroUsuarios: assentos.pessoas,
       plano,
-      valor: calcularValor(modulosAtivos, numeroUsuarios, plano),
+      valor: calcularValor(modulosAtivos, assentos, plano),
       catalogo: MODULES,
+      itens: itensDe(assentos),
+      faixa: faixaDe(assentos.pessoas),
+      faixas: FAIXAS,
     };
   }
 
   private view(
     a: Assinatura,
+    assentos: Assentos,
     hoje: string,
     faturaVencida: FaturaVencida | null,
   ): AssinaturaView {
     return {
-      ...this.valores(a.modulosAtivos, a.numeroUsuarios, a.plano),
+      ...this.valores(a.modulosAtivos, assentos, a.plano),
       ciclo: { inicio: a.cicloInicio, fim: a.cicloFim },
       emTrialAte: a.emTrialAte,
       emTrial: emTrial(a.emTrialAte, hoje),

@@ -81,16 +81,21 @@ describeDb('Billing (integração)', () => {
   it('leitura: admin e financeiro; gestor → 403', async () => {
     for (const papel of ['admin', 'financeiro']) {
       const a = await http().get('/assinatura').set(como(papel)).expect(200);
+      // Agenda: admin e gestor (o financeiro não abre a agenda) × 25,50.
       expect(a.body).toMatchObject({
         modulosAtivos: ['agenda'],
         numeroUsuarios: 3,
-        valor: 90,
+        valor: 51,
+        faixa: { de: 1, ate: 5, desconto: 0 },
       });
+      expect(
+        a.body.itens.find((i: { code: string }) => i.code === 'financeiro'),
+      ).toEqual({ code: 'financeiro', pessoas: 3, preco: 29.75 });
       await http().get('/assinatura/faturas').set(como(papel)).expect(200);
       await http()
         .post('/assinatura/simular')
         .set(como(papel))
-        .send({ modulos: ['agenda'], numeroUsuarios: 3, plano: 'mensal' })
+        .send({ modulos: ['agenda'], plano: 'mensal' })
         .expect(201)
         // QA-006: fora do trial não há "1ª fatura" a mostrar.
         .expect((r) => expect(r.body.primeiraFatura).toBeNull());
@@ -104,27 +109,32 @@ describeDb('Billing (integração)', () => {
       await http()
         .patch('/assinatura')
         .set(como(papel))
-        .send({ numeroUsuarios: 6 })
+        .send({ modulosAtivos: ['agenda', 'financeiro'] })
         .expect(403);
     }
+    // + Financeiro: 3 assentos (admin, financeiro, gestor) × 29,75
     const sim = await http()
       .post('/assinatura/simular')
       .set(como('admin'))
-      .send({ modulos: ['agenda'], numeroUsuarios: 6, plano: 'mensal' })
+      .send({ modulos: ['agenda', 'financeiro'], plano: 'mensal' })
       .expect(201);
     expect(sim.body).toMatchObject({
-      valor: 180,
-      ajuste: { tipo: 'complementar', valor: 90 },
+      valor: 140.25,
+      valorAtual: 51,
+      ajuste: { tipo: 'complementar', valor: 89.25 },
     });
     const res = await http()
       .patch('/assinatura')
       .set(como('admin'))
-      .send({ numeroUsuarios: 6 })
+      .send({ modulosAtivos: ['agenda', 'financeiro'] })
       .expect(200);
-    expect(res.body.ajuste).toMatchObject({ tipo: 'complementar', valor: 90 });
+    expect(res.body.ajuste).toMatchObject({
+      tipo: 'complementar',
+      valor: 89.25,
+    });
     expect(res.body.fatura).toMatchObject({
       tipo: 'complementar',
-      valorLiquido: 90,
+      valorLiquido: 89.25,
       status: 'pendente',
     });
     const [{ n }] = await ds.query(
@@ -139,9 +149,9 @@ describeDb('Billing (integração)', () => {
     const res = await http()
       .patch('/assinatura')
       .set(como('admin'))
-      .send({ numeroUsuarios: 3 })
+      .send({ modulosAtivos: ['agenda'] })
       .expect(200);
-    expect(res.body.ajuste).toMatchObject({ tipo: 'credito', valor: 90 });
+    expect(res.body.ajuste).toMatchObject({ tipo: 'credito', valor: 89.25 });
     expect(res.body.saldoCredito).toBe(0);
     const lista = await http()
       .get('/assinatura/faturas')
@@ -154,17 +164,7 @@ describeDb('Billing (integração)', () => {
     });
   });
 
-  it('não reduz abaixo dos acessos ativos (convites pendentes contam) → 409', async () => {
-    await http()
-      .patch('/assinatura')
-      .set(como('admin'))
-      .send({ numeroUsuarios: 2 })
-      .expect(409);
-    await http()
-      .patch('/assinatura')
-      .set(como('admin'))
-      .send({ numeroUsuarios: 4 })
-      .expect(200);
+  it('assentos vêm dos acessos (convite pendente conta); simular o impacto de mais uma pessoa', async () => {
     const convidado = await criarPessoa(ds, { email: 'convite@bill.com' });
     await criarAcesso(ds, {
       usuarioId: convidado.id,
@@ -172,12 +172,33 @@ describeDb('Billing (integração)', () => {
       papel: 'recepcao',
       convitePendente: true,
     });
-    const r = await http()
+    const a = await http().get('/assinatura').set(como('admin')).expect(200);
+    expect(a.body).toMatchObject({ numeroUsuarios: 4, valor: 76.5 });
+    const sim = await http()
+      .post('/assinatura/simular')
+      .set(como('admin'))
+      .send({
+        modulos: ['agenda'],
+        plano: 'mensal',
+        adicionar: { papel: 'profissional', clinico: true },
+      })
+      .expect(201);
+    expect(sim.body).toMatchObject({
+      valorAtual: 76.5,
+      valor: 102,
+      numeroUsuarios: 5,
+    });
+    await http()
+      .post('/assinatura/simular')
+      .set(como('admin'))
+      .send({ modulos: [], plano: 'mensal', adicionar: { papel: 'X!' } })
+      .expect(400);
+    // + Múltiplas unidades: 4 pessoas × 12,75 → complementar pendente.
+    await http()
       .patch('/assinatura')
       .set(como('admin'))
-      .send({ numeroUsuarios: 3 })
-      .expect(409);
-    expect(r.body.message).toMatch(/4 usuário\(s\) ativo\(s\)/);
+      .send({ modulosAtivos: ['agenda', 'multiplas_unidades'] })
+      .expect(200);
   });
 
   it('acesso desativado depois do login → 401 mesmo com o access válido', async () => {
@@ -193,7 +214,7 @@ describeDb('Billing (integração)', () => {
     const auth = { Authorization: `Bearer ${l.body.accessToken}` };
     // Enxerga só a assinatura do próprio tenant.
     const a = await http().get('/assinatura').set(auth).expect(200);
-    expect(a.body.numeroUsuarios).toBe(9);
+    expect(a.body.numeroUsuarios).toBe(1);
     await ds.getRepository(Acesso).update({ id: acesso.id }, { ativo: false });
     await http().get('/modulos').set(auth).expect(401);
   });
@@ -206,7 +227,7 @@ describeDb('Billing (integração)', () => {
     const f = lista.body.data.find(
       (x: { status: string }) => x.status === 'pendente',
     );
-    // Há a complementar do aumento para 4 usuários.
+    // Há a complementar de Múltiplas unidades.
     expect(f).toBeDefined();
     const pagar = (id: string) =>
       http().post(`/plataforma/faturas/${id}/pagar`);

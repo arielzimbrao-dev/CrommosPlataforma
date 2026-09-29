@@ -29,7 +29,7 @@ compatíveis): `clientes`, `usuarios`, `assinaturas`, `faturas`. Novas:
 
 - `acessos` — `(id, usuario_id → usuarios, produto, tenant_id, papel varchar, ativo bool,
   convite_pendente bool, timestamps)`, único `(usuario_id, produto, tenant_id)`. É o que a
-  plataforma usa para login (lista de clínicas), limite de usuários e permissão nas telas de
+  plataforma usa para login (lista de clínicas), assentos da cobrança e permissão nas telas de
   assinatura (`admin` altera; `admin`/`financeiro` leem).
 - `sessoes` — `(jti pk, usuario_id, produto, tenant_id, refresh_hash, expira_em, revogada_em,
   substituida_por, familia, created_at)`. `substituida_por` = jti da sessão que a rotacionou
@@ -100,9 +100,9 @@ constante; `404` sem chave configurada. O `produto` vem da chave, não do corpo.
 
 | Método e rota | Corpo | Resposta |
 |---|---|---|
-| `POST /interno/acessos` | `{ tenantId, email, nome, papel }` | `201 { usuarioId, novo, convitePendente, emailEnviado }` — **todo convite nasce pendente e manda e-mail** (QA-004): quem não tem senha recebe o link de definir a senha (token da pessoa, 7 dias); quem já tem conta recebe o link de aceite (`FRONTEND_URL/aceitar-convite?token=`, página com o botão que chama `POST /auth/aceitar-convite`; token do acesso, 7 dias). `convitePendente` é sempre `true` — o produto **não** deve expor `novo` (revelaria se o e-mail tem conta). **E-mail que falhou não é erro** (B2): o acesso está gravado, `emailEnviado: false` → o produto grava o vínculo e oferece "reenviar convite". `409` já tem acesso neste tenant; `409` limite de usuários da assinatura (trava a linha da assinatura; a mensagem contém "Limite" e orienta para a tela Assinatura) |
+| `POST /interno/acessos` | `{ tenantId, email, nome, papel, clinico? }` | `201 { usuarioId, novo, convitePendente, emailEnviado }` — **todo convite nasce pendente e manda e-mail** (QA-004): quem não tem senha recebe o link de definir a senha (token da pessoa, 7 dias); quem já tem conta recebe o link de aceite (`FRONTEND_URL/aceitar-convite?token=`, página com o botão que chama `POST /auth/aceitar-convite`; token do acesso, 7 dias). `convitePendente` é sempre `true` — o produto **não** deve expor `novo` (revelaria se o e-mail tem conta). **E-mail que falhou não é erro** (B2): o acesso está gravado, `emailEnviado: false` → o produto grava o vínculo e oferece "reenviar convite". `409` já tem acesso neste tenant. Sem limite de pessoas: o assento novo entra no pró-rata da assinatura (fatura complementar) |
 | `DELETE /interno/acessos` | `{ tenantId, usuarioId }` | `204` — compensação: o produto não conseguiu gravar o vínculo depois do `POST`; remove o acesso (libera a vaga) e revoga as sessões no tenant. `404` sem acesso |
-| `PATCH /interno/acessos` | `{ tenantId, usuarioId, papel?, ativo? }` | `200 { usuarioId, produto, tenantId, papel, ativo, convitePendente }` — desativar revoga as sessões da pessoa no tenant; reativar respeita o limite (`409`); `404` sem acesso |
+| `PATCH /interno/acessos` | `{ tenantId, usuarioId, papel?, ativo?, clinico? }` | `200 { usuarioId, produto, tenantId, papel, ativo, convitePendente, clinico }` — desativar revoga as sessões da pessoa no tenant; papel/ativo/`clinico` mudam os assentos (pró-rata: complementar ou crédito); `404` sem acesso. `clinico` = a pessoa está vinculada a um profissional de saúde no produto (o produto avisa ao vincular/desvincular) |
 | `POST /interno/acessos/reenviar-convite` | `{ tenantId, usuarioId }` | `204` (link novo do mesmo tipo: definir senha ou aceite); `409` `'Esta pessoa já aceitou o convite.'` |
 | `GET /interno/pessoas/:usuarioId` | — | `{ id, nome, email, emailConfirmado }`; `404` se a pessoa não tem acesso a nenhum tenant do produto |
 
@@ -145,8 +145,15 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
 - **`novo`** = a pessoa foi criada agora; **`convitePendente`** = ela ainda não tem senha (nova ou
   só com convites pendentes; o link anterior deixa de valer). Falha no envio → `201` com
   `emailEnviado: false` e o acesso gravado (o produto usa "reenviar convite").
-- **Limite de usuários:** acessos `ativo` do tenant (convite pendente é ativo) contra
-  `assinaturas.numero_usuarios`; tenant sem assinatura (legado) não tem limite.
+- **Assento por módulo (migration 10, substitui o limite de usuários):** valor = Σ (preço do
+  módulo na faixa × pessoas com acesso ao módulo) × (1 − desconto do plano). Pessoas = acessos
+  `ativo` (convite pendente conta); quem ocupa assento em cada módulo vem do papel (espelha o menu do
+  Clinic) e, nos clínicos (Prontuário, Exames, Telemedicina), de `acessos.clinico`. Faixa pelo
+  total de pessoas (1–5, 6–10 −10%, 11–30 −20%, 31+ −30%). Mudança de acesso → pró-rata na hora.
+  `GET /assinatura` traz `itens: [{ code, pessoas, preco }]`, `faixa` e `faixas`; `simular` aceita
+  `adicionar: { papel, clinico? }` (impacto de convidar/ativar) e devolve `valorAtual`, `valor`,
+  `numeroUsuarios`, `itens`, `faixa`. `numeroUsuarios` no corpo do `PATCH`/`simular` é ignorado
+  (compatibilidade). `assinaturas.numero_usuarios` = pessoas cobradas (informativo).
 - **Refresh:** rotação a cada chamada. Reapresentar um refresh rotacionado há **menos de 10 s**
   (várias abas renovando juntas, B1) emite um par novo, sem revogar nada. Depois disso,
   reapresentar um refresh **já rotacionado** (`substituida_por` preenchido) é reuso: revoga todas
@@ -163,8 +170,7 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
 - **Validação (QA-007):** o `AllExceptionsFilter` traduz para pt-BR as mensagens padrão do
   class-validator/ParseUUIDPipe nos `400` (`mensagens-validacao.ts`); mensagens próprias dos DTOs
   ficam como estão.
-- **Trial (QA-009):** nasce com 5 usuários (`USUARIOS_TRIAL`), sem cobrança; a migration 07 sobe
-  para 5 os trials em andamento ainda não confirmados.
+- **Trial (QA-009):** sem cobrança e sem limite de pessoas (assento por módulo).
 - **1ª fatura (QA-006):** `simular.primeiraFatura` = a fatura `ciclo` que a confirmação gera —
   já (sem assinatura, ou trial vencido/modo leitura: período a partir de hoje) ou no fim do trial
   ativo (período a partir de `em_trial_ate`); fora do trial, `null`. `valorLiquido` já desconta o
