@@ -1,4 +1,10 @@
-import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { sha256 } from '../common/crypto/segredo';
 import { ThrottlerPostgres } from '../common/http/throttler-postgres';
@@ -9,10 +15,26 @@ const JANELA_LOGIN = 15 * MINUTO;
 export const FALHAS_POR_EMAIL = 5;
 /** Falhas de login por IP, todas as contas (varredura de e-mails). */
 export const FALHAS_POR_IP = 50;
+/**
+ * S-06: falhas numa **conta** vindas de qualquer IP (botnet) na última hora. A
+ * partir daqui cada tentativa espera (dobra a cada falha, até 5 s) — atraso,
+ * não bloqueio: um 429 por conta deixaria qualquer um travar o login do dono.
+ */
+export const FALHAS_POR_CONTA = 10;
+const JANELA_CONTA = 60 * MINUTO;
+const ATRASO_MAX_MS = 5_000;
+const SEM_BLOQUEIO = 1_000_000;
+
+/** Atraso da tentativa (ms) pelo nº de falhas da conta na janela. */
+export function atrasoPorFalhas(falhas: number): number {
+  if (falhas < FALHAS_POR_CONTA) return 0;
+  return Math.min(ATRASO_MAX_MS, 250 * 2 ** (falhas - FALHAS_POR_CONTA));
+}
 
 const TABELA = 'crommos.rate_limit';
 const LOGIN_EMAIL = 'login-falha';
 const LOGIN_IP = 'login-falha-ip';
+const LOGIN_CONTA = 'login-falha-conta';
 
 /**
  * Limites que dependem do resultado ou do alvo (QA-003), guardados na mesma
@@ -28,6 +50,7 @@ const LOGIN_IP = 'login-falha-ip';
 @Injectable()
 export class TentativasService {
   private readonly contador: ThrottlerPostgres;
+  private readonly logger = new Logger(TentativasService.name);
 
   constructor(@Inject('DATA_SOURCE') private readonly ds: DataSource) {
     this.contador = new ThrottlerPostgres(ds, TABELA);
@@ -61,6 +84,17 @@ export class TentativasService {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
+    const [conta] = await this.ds.query<{ hits: number }[]>(
+      `SELECT hits FROM ${TABELA} WHERE chave = $1 AND janela_fim > now()`,
+      [`${LOGIN_CONTA}:${sha256(email)}`],
+    );
+    const atraso = atrasoPorFalhas(Number(conta?.hits ?? 0));
+    if (atraso) await this.esperar(atraso);
+  }
+
+  /** Separado para o teste não esperar de verdade. */
+  protected esperar(ms: number): Promise<void> {
+    return new Promise((ok) => setTimeout(ok, ms));
   }
 
   async registrarFalhaLogin(ip: string, email: string): Promise<void> {
@@ -79,6 +113,20 @@ export class TentativasService {
       JANELA_LOGIN,
       LOGIN_IP,
     );
+    const conta = sha256(email);
+    const { totalHits } = await this.contador.increment(
+      conta,
+      JANELA_CONTA,
+      SEM_BLOQUEIO, // só conta: o contador não congela no limite
+      JANELA_CONTA,
+      LOGIN_CONTA,
+    );
+    // Alerta (sem o e-mail): no limiar e a cada 100 falhas depois.
+    if (totalHits === FALHAS_POR_CONTA || totalHits % 100 === 0) {
+      this.logger.warn(
+        `[login] ${totalHits} falhas de login na última hora numa mesma conta (${conta.slice(0, 12)}), de vários IPs: possível ataque distribuído.`,
+      );
+    }
   }
 
   /** Senha certa: zera as falhas do par (as do IP seguem valendo). */
