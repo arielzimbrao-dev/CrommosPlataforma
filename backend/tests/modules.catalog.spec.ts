@@ -4,6 +4,7 @@ import {
   ModuleCode,
   PessoaAcesso,
   PlanoPeriodo,
+  ajusteVirada,
   calcularValor,
   contarAssentos,
   faixaDe,
@@ -141,5 +142,126 @@ describe('calcularValor (assento por módulo)', () => {
         calcularValor(PRECIFICADOS, a, PlanoPeriodo.Mensal),
       ).toBeLessThanOrEqual(antigo(n));
     }
+  });
+});
+
+describe('QA-157: proteção na virada de faixa', () => {
+  const doc = {
+    consultorio: [p('admin', true), p('recepcao')],
+    pequena: [
+      p('admin', true),
+      ...repetir(2, p('profissional', true)),
+      ...repetir(2, p('recepcao')),
+      p('financeiro'),
+    ],
+    media: [
+      p('admin', true),
+      ...repetir(9, p('profissional', true)),
+      ...repetir(5, p('recepcao')),
+      ...repetir(2, p('financeiro')),
+      p('gestor'),
+    ],
+  };
+
+  it('só Agenda: 10 pessoas 229,50; 11 pessoas continua 229,50 (+5,10 de ajuste); 12 pessoas 244,80', () => {
+    const a = (n: number) => contarAssentos(repetir(n, p('recepcao')));
+    expect(calcularValor([Agenda], a(10), PlanoPeriodo.Mensal)).toBe(229.5);
+    expect(calcularValor([Agenda], a(11), PlanoPeriodo.Mensal)).toBe(229.5);
+    expect(ajusteVirada([Agenda], a(11))).toBe(5.1);
+    expect(calcularValor([Agenda], a(12), PlanoPeriodo.Mensal)).toBe(244.8);
+    expect(ajusteVirada([Agenda], a(12))).toBe(0);
+    // dentro da faixa nada muda; 30 → 31 também protegido
+    expect(ajusteVirada([Agenda], a(10))).toBe(0);
+    expect(calcularValor([Agenda], a(31), PlanoPeriodo.Mensal)).toBe(612);
+  });
+
+  it('o ajuste entra antes do desconto do plano', () => {
+    const a = contarAssentos(repetir(11, p('recepcao')));
+    expect(calcularValor([Agenda], a, PlanoPeriodo.Anual)).toBe(183.6);
+  });
+
+  it('os três perfis de docs/03-precificacao.md não mudam', () => {
+    const c = contarAssentos(doc.consultorio);
+    expect(calcularValor([Agenda, Prontuario], c, PlanoPeriodo.Mensal)).toBe(
+      76.5,
+    );
+    expect(
+      calcularValor([Agenda, Prontuario, Financeiro], c, PlanoPeriodo.Mensal),
+    ).toBe(106.25);
+    const pq = contarAssentos(doc.pequena);
+    const quatro = [Agenda, Prontuario, Financeiro, Exames];
+    expect(calcularValor(quatro, pq, PlanoPeriodo.Mensal)).toBe(283.06);
+    expect(ajusteVirada(quatro, pq)).toBe(0);
+    const md = contarAssentos(doc.media);
+    expect(calcularValor(PRECIFICADOS, md, PlanoPeriodo.Mensal)).toBe(945.2);
+    expect(ajusteVirada(PRECIFICADOS, md)).toBe(0);
+  });
+
+  // Todas as combinações de módulos com preço.
+  const combinacoes = Array.from({ length: 31 }, (_, i) =>
+    PRECIFICADOS.filter((_, b) => ((i + 1) >> b) & 1),
+  );
+  const perfis = [
+    p('admin', true),
+    p('profissional', true),
+    p('profissional'),
+    p('recepcao'),
+    p('financeiro'),
+    p('gestor'),
+  ];
+
+  it('propriedade: equipe de um mesmo perfil, adicionar uma pessoa nunca reduz o valor (1 → 60)', () => {
+    for (const mods of combinacoes)
+      for (const perfil of perfis) {
+        let antes = 0;
+        for (let n = 1; n <= 60; n++) {
+          const v = calcularValor(
+            mods,
+            contarAssentos(repetir(n, perfil)),
+            PlanoPeriodo.Mensal,
+          );
+          expect(v).toBeGreaterThanOrEqual(antes);
+          antes = v;
+        }
+      }
+  });
+
+  it('propriedade: equipe mista, adicionar uma pessoa que custa ao menos a média da equipe nunca reduz o valor', () => {
+    // Pseudoaleatório determinístico (LCG): o teste é reproduzível.
+    let semente = 157;
+    const sorteio = (n: number) => {
+      semente = (semente * 1103515245 + 12345) % 2 ** 31;
+      return semente % n;
+    };
+    // Custo de uma pessoa (R$) numa equipe de `n` pessoas (preço da faixa de n).
+    const custo = (mods: ModuleCode[], pessoa: PessoaAcesso, n: number) =>
+      mods
+        .filter((c) => contarAssentos([pessoa]).porModulo[c])
+        .reduce((s, c) => s + precoNaFaixa(c, n), 0);
+    let casos = 0;
+    for (let i = 0; i < 4000; i++) {
+      const mods = combinacoes[sorteio(combinacoes.length)];
+      const equipe = Array.from(
+        { length: 1 + sorteio(45) },
+        () => perfis[sorteio(perfis.length)],
+      );
+      const nova = perfis[sorteio(perfis.length)];
+      const n = equipe.length;
+      // Média na faixa anterior à de n + 1 (a do piso da virada).
+      const limite = [5, 10, 30].filter((l) => l <= n).pop() ?? n;
+      const media = equipe.reduce((s, x) => s + custo(mods, x, limite), 0) / n;
+      if (custo(mods, nova, limite) + 1e-9 < media) continue;
+      casos++;
+      expect(
+        calcularValor(
+          mods,
+          contarAssentos([...equipe, nova]),
+          PlanoPeriodo.Mensal,
+        ),
+      ).toBeGreaterThanOrEqual(
+        calcularValor(mods, contarAssentos(equipe), PlanoPeriodo.Mensal),
+      );
+    }
+    expect(casos).toBeGreaterThan(1000);
   });
 });

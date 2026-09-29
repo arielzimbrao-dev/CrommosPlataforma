@@ -193,6 +193,34 @@ describeDb('Billing (integração)', () => {
       .set(como('admin'))
       .send({ modulos: [], plano: 'mensal', adicionar: { papel: 'X!' } })
       .expect(400);
+    // QA-180: papel fora da lista → 400 com a lista dos papéis.
+    const inexistente = await http()
+      .post('/assinatura/simular')
+      .set(como('admin'))
+      .send({
+        modulos: ['agenda'],
+        plano: 'mensal',
+        adicionar: { papel: 'superusuario' },
+      })
+      .expect(400);
+    expect(inexistente.body.message).toEqual([
+      'Papel inválido: use admin, gestor, recepcao, profissional ou financeiro.',
+    ]);
+    // QA-167: desativar a recepção (remover) → 2 assentos de Agenda.
+    const sem = await http()
+      .post('/assinatura/simular')
+      .set(como('admin'))
+      .send({
+        modulos: ['agenda'],
+        plano: 'mensal',
+        remover: { papel: 'recepcao' },
+      })
+      .expect(201);
+    expect(sem.body).toMatchObject({
+      valorAtual: 76.5,
+      valor: 51,
+      numeroUsuarios: 3,
+    });
     // + Múltiplas unidades: 4 pessoas × 12,75 → complementar pendente.
     await http()
       .patch('/assinatura')

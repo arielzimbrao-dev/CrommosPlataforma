@@ -4,20 +4,24 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
-  Matches,
   Max,
   Min,
   ValidateNested,
 } from 'class-validator';
-import { ModuleCode, PlanoPeriodo } from '../modules.catalog';
+import { ModuleCode, PAPEIS, PlanoPeriodo } from '../modules.catalog';
 
 const USUARIOS = 'Informe de 1 a 1000 usuários.';
 
-/** Pessoa a mais na simulação (convite/ativação): o impacto na mensalidade. */
+/** Pessoa a mais/a menos na simulação: o impacto na mensalidade. */
 export class PessoaSimuladaDto {
-  @Matches(/^[a-z_]{2,30}$/, { message: 'papel inválido.' })
+  // QA-180: só os papéis do produto (os assentos dependem deles).
+  @IsIn(PAPEIS, {
+    message:
+      'Papel inválido: use admin, gestor, recepcao, profissional ou financeiro.',
+  })
   papel!: string;
 
   @IsOptional()
@@ -69,4 +73,10 @@ export class SimularDto {
   @ValidateNested()
   @Type(() => PessoaSimuladaDto)
   adicionar?: PessoaSimuladaDto;
+
+  /** QA-167: pessoa a menos (desativar; trocar o papel = remover + adicionar). */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PessoaSimuladaDto)
+  remover?: PessoaSimuladaDto;
 }

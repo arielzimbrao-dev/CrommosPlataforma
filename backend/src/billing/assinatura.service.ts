@@ -29,6 +29,7 @@ import {
   ModuleCode,
   PessoaAcesso,
   PlanoPeriodo,
+  ajusteVirada,
   calcularValor,
   contarAssentos,
   faixaDe,
@@ -67,6 +68,8 @@ export interface AssinaturaView {
   plano: PlanoPeriodo;
   /** R$/mês (fórmula de docs/03-precificacao.md). */
   valor: number;
+  /** QA-157: ajuste da virada de faixa (R$/mês, antes do plano); 0 = nenhum. */
+  ajusteFaixa: number;
   catalogo: typeof MODULES;
   /** Assentos (pessoas com acesso) e preço na faixa de cada módulo. */
   itens: ItemAssinatura[];
@@ -125,19 +128,25 @@ export interface NovoTrial {
 
 /**
  * Assentos do tenant, derivados dos acessos **ativos** (convite pendente
- * incluso: a pessoa já foi chamada) — `mais` simula pessoas a mais.
+ * incluso: a pessoa já foi chamada) — `mais` simula pessoas a mais e `menos`
+ * uma a menos (desativar ou trocar o papel).
  */
 export async function assentosDoTenant(
   em: EntityManager,
   produto: Produto,
   tenantId: string,
   mais: PessoaAcesso[] = [],
+  menos?: PessoaAcesso,
 ): Promise<Assentos> {
   const pessoas = await em.getRepository(Acesso).find({
     where: { produto, tenantId, ativo: true },
     select: { id: true, papel: true, clinico: true },
   });
-  return contarAssentos([...pessoas, ...mais]);
+  // Uma pessoa a menos do papel, de preferência com o mesmo vínculo clínico.
+  const mesmoPapel = pessoas.filter((p) => p.papel === menos?.papel);
+  const sai =
+    mesmoPapel.find((p) => p.clinico === menos?.clinico) ?? mesmoPapel[0];
+  return contarAssentos([...pessoas.filter((p) => p !== sai), ...mais]);
 }
 
 /**
@@ -193,8 +202,15 @@ export class AssinaturaService {
   private assentos(
     ator: Pick<Ator, 'produto' | 'tenantId'>,
     mais?: PessoaAcesso[],
+    menos?: PessoaAcesso,
   ) {
-    return assentosDoTenant(this.ds.manager, ator.produto, ator.tenantId, mais);
+    return assentosDoTenant(
+      this.ds.manager,
+      ator.produto,
+      ator.tenantId,
+      mais,
+      menos,
+    );
   }
 
   async getCurrent(ator: Ator, hoje = hojeISO()): Promise<AssinaturaView> {
@@ -279,6 +295,8 @@ export class AssinaturaService {
     hoje = hojeISO(),
   ): Promise<{
     valor: number;
+    /** QA-157: ajuste da virada de faixa (R$/mês, antes do plano). */
+    ajusteFaixa: number;
     valorAtual: number;
     numeroUsuarios: number;
     itens: ItemAssinatura[];
@@ -291,14 +309,22 @@ export class AssinaturaService {
       this.buscar(ator),
       this.assentos(ator),
     ]);
-    const assentos = dto.adicionar
-      ? await this.assentos(ator, [
-          { papel: dto.adicionar.papel, clinico: !!dto.adicionar.clinico },
-        ])
-      : atuais;
+    const pessoa = (p: { papel: string; clinico?: boolean }) => ({
+      papel: p.papel,
+      clinico: !!p.clinico,
+    });
+    const assentos =
+      dto.adicionar || dto.remover
+        ? await this.assentos(
+            ator,
+            dto.adicionar ? [pessoa(dto.adicionar)] : [],
+            dto.remover && pessoa(dto.remover),
+          )
+        : atuais;
     const valor = calcularValor(dto.modulos, assentos, dto.plano);
     const base = {
       valor,
+      ajusteFaixa: ajusteVirada(dto.modulos, assentos),
       valorAtual: a ? calcularValor(a.modulosAtivos, atuais, a.plano) : 0,
       numeroUsuarios: assentos.pessoas,
       itens: itensDe(assentos),
@@ -869,6 +895,7 @@ export class AssinaturaService {
       numeroUsuarios: assentos.pessoas,
       plano,
       valor: calcularValor(modulosAtivos, assentos, plano),
+      ajusteFaixa: ajusteVirada(modulosAtivos, assentos),
       catalogo: MODULES,
       itens: itensDe(assentos),
       faixa: faixaDe(assentos.pessoas),
