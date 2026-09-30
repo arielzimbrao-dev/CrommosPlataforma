@@ -62,7 +62,7 @@ export class MailService {
   }
 
   /**
-   * QA-004: convite para quem **já tem conta**. O link aponta para a página
+   * Convite para quem **já tem conta**. O link aponta para a página
    * do front (`/aceitar-convite`), que confere o token e aceita pelo botão
    * (`POST /auth/aceitar-convite`).
    */
@@ -97,7 +97,7 @@ export class MailService {
   }
 
   /**
-   * QA-195: o admin de uma clínica desligou a verificação em duas etapas da
+   * O admin de uma clínica desligou a verificação em duas etapas da
    * pessoa (vale em todas as clínicas dela). Aviso sem link.
    */
   sendAvisoDoisFatoresDesligado(

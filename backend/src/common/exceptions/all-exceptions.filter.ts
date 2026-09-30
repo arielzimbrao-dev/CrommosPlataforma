@@ -10,7 +10,7 @@ import { Request, Response } from 'express';
 import { traduzirValidacao } from './mensagens-validacao';
 
 /**
- * Mensagens de 409 por constraint (N-07). Constraint fora da lista cai na
+ * Mensagens de 409 por constraint. Constraint fora da lista cai na
  * genérica. Os services que já tratam o próprio 23505/23P01 continuam valendo
  * (mensagem de contexto); este é o padrão para todo o resto.
  */
@@ -37,7 +37,7 @@ export function mensagemConflito(exception: unknown): string | undefined {
 }
 
 /**
- * QA-191 (como o QA-188/169 da clinic-api): o Nest converte o SyntaxError do
+ * O Nest converte o SyntaxError do
  * body-parser (JSON malformado) e o URIError do Express (`%ZZ` num parâmetro)
  * em `BadRequestException(err.message)` antes do filtro, e o texto padrão
  * (inglês) do Nest, do throttler e do roteador sai sem mensagem própria.
@@ -73,7 +73,7 @@ function traduzirPadraoNest(status: number, message: unknown): unknown {
 /**
  * Filtro global de exceções. Normaliza o corpo de erro retornado pela API.
  * - `HttpException`: preserva status e mensagem (erros de negócio esperados).
- * - Violação de UNIQUE/EXCLUDE do Postgres: 409 sem detalhe do banco (N-07).
+ * - Violação de UNIQUE/EXCLUDE do Postgres: 409 sem detalhe do banco.
  * - Qualquer outro erro (banco, bug, etc.): responde 500 com mensagem genérica
  *   e loga o erro completo apenas no servidor — nunca expõe stack trace ou
  *   detalhe interno no corpo da resposta.
@@ -101,7 +101,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         typeof corpo === 'object' && corpo !== null && 'message' in corpo
           ? corpo.message
           : corpo;
-      // QA-007: mensagens padrão da validação (inglês) → pt-BR.
+      // Mensagens padrão da validação (inglês) → pt-BR.
       if (status === 400)
         message = traduzirErroDoParser(traduzirValidacao(message));
       message = traduzirPadraoNest(status, message);
@@ -120,7 +120,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
-    // QA-191: resposta de erro nunca vai para cache.
+    // Resposta de erro nunca vai para cache.
     response.setHeader('Cache-Control', 'no-store');
     response.status(status).send({
       statusCode: status,

@@ -1,7 +1,7 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import { ITokenPayload } from '../../common/interfaces/token-payload.interface';
 
-/** Extrai o usuário autenticado (`request.user`) — exportada para teste direto. */
+/** Extrai o usuário autenticado (`request.user`). */
 export const currentUserFactory = (
   _data: unknown,
   ctx: ExecutionContext,

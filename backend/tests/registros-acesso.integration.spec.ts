@@ -22,7 +22,7 @@ import {
 } from './support/dados';
 
 /**
- * L-24 (Marco Civil, art. 15): login (sucesso e falha), logout, refresh e
+ * Registros de acesso (Marco Civil, art. 15): login (sucesso e falha), logout, refresh e
  * troca de senha ficam em `crommos.auditoria` com IP, navegador e data/hora;
  * o admin da clínica vê os da equipe (90 dias); a purga apaga o que passou
  * da retenção.
@@ -30,7 +30,7 @@ import {
 const describeDb =
   process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
 
-const UA = 'Mozilla/5.0 (Teste L-24)';
+const UA = 'Mozilla/5.0 (Teste)';
 
 describeDb('Registros de acesso (integração)', () => {
   let app: INestApplication;
@@ -181,7 +181,7 @@ describeDb('Registros de acesso (integração)', () => {
       .expect(403);
   });
 
-  it('QA-206: redefinir a senha pelo link grava IP, navegador e a clínica (o admin vê)', async () => {
+  it('redefinir a senha pelo link grava IP, navegador e a clínica (o admin vê)', async () => {
     await request(app.getHttpServer())
       .post('/auth/forgot-password')
       .send({ email: 'eq@l24.com' })
@@ -206,7 +206,7 @@ describeDb('Registros de acesso (integração)', () => {
     expect(r.body.data[0]).toMatchObject({ acao: 'redefinir-senha' });
   });
 
-  it('QA-211: a lista diz de quem o admin desligou o 2FA (alvoId)', async () => {
+  it('a lista diz de quem o admin desligou o 2FA (alvoId)', async () => {
     await ds.query(
       `INSERT INTO crommos.auditoria (usuario_id, produto, tenant_id, action, resource, resource_id)
        VALUES ($1, 'clinic', $2, '2fa-desligado-pelo-admin', 'auth', $3)`,

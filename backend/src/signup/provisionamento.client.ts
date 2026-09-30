@@ -38,7 +38,7 @@ export class ProvisionamentoClient {
   }
 
   /**
-   * L-29: a pessoa excluiu a conta; o produto anonimiza a cópia local de nome
+   * A pessoa excluiu a conta; o produto anonimiza a cópia local de nome
    * e e-mail. Idempotente no produto. Lança fora de 2xx (quem chama repete).
    */
   async anonimizarPessoa(cfg: ConfigProduto, usuarioId: string): Promise<void> {

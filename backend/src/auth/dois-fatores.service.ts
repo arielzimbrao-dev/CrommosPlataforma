@@ -84,7 +84,7 @@ export const exigidoPara = (
   exigirNaClinica && (clinico || PAPEIS_2FA_EXIGIVEL.includes(papel));
 
 /**
- * Verificação em duas etapas (TOTP, L-07) da pessoa — vale em todos os
+ * Verificação em duas etapas (TOTP) da pessoa — vale em todos os
  * produtos. Segredo cifrado; o código aceito grava o passo (não se reusa);
  * códigos de recuperação só com hash, consumidos numa instrução atômica.
  */
@@ -272,7 +272,7 @@ export class DoisFatoresService {
 
   /**
    * Quem perdeu o celular: o admin desliga (a pessoa configura de novo). O
-   * 2FA é da pessoa e vale em todas as clínicas dela (QA-195): só o admin de
+   * 2FA é da pessoa e vale em todas as clínicas dela: só o admin de
    * uma clínica em que ela trabalha (acesso ativo e **aceito** — convite
    * pendente não conta); a pessoa recebe e-mail e o evento entra na trilha
    * dela em todas as clínicas.

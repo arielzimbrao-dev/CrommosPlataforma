@@ -60,7 +60,7 @@ describe('AllExceptionsFilter', () => {
     expect(send.mock.calls[0][0].message).toEqual(payload);
   });
 
-  it('QA-007: 400 da validação sai em pt-BR', () => {
+  it('400 da validação sai em pt-BR', () => {
     const { host, send } = buildHost('/assinatura/simular', 'POST');
     filter.catch(
       new BadRequestException(['numeroUsuarios must not be greater than 1000']),
@@ -104,7 +104,7 @@ describe('AllExceptionsFilter', () => {
     expect(JSON.stringify(body)).not.toContain('10.0.0.5');
   });
 
-  describe('violação de unicidade/exclusão → 409 (N-07)', () => {
+  describe('violação de unicidade/exclusão → 409', () => {
     const erroPg = (code: string, constraint?: string) =>
       Object.assign(new Error('duplicate key value violates ...'), {
         code,
@@ -145,7 +145,7 @@ describe('AllExceptionsFilter', () => {
     });
   });
 
-  it('não registra a query string no log (segredos em ?token= — N-23)', () => {
+  it('não registra a query string no log (segredos em ?token=)', () => {
     const erro = jest.spyOn(Logger.prototype, 'error');
     erro.mockClear();
     const { host } = buildHost('/webhooks/sendpulse?token=segredo', 'POST');
@@ -163,7 +163,7 @@ describe('AllExceptionsFilter', () => {
     expect(send.mock.calls[0][0].message).toBe('Erro interno do servidor');
   });
 
-  describe('QA-191: texto do parser e do roteador em pt-BR, sem cache', () => {
+  describe('texto do parser e do roteador em pt-BR, sem cache', () => {
     it.each([
       [
         'Unexpected end of JSON input',

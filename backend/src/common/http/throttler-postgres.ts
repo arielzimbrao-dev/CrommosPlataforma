@@ -17,9 +17,8 @@ interface Linha {
  * Janela fixa por chave, numa instrução só (upsert atômico): conta o hit,
  * reabre a janela vencida e bloqueia por `blockDuration` quem passou do
  * limite. O relógio é o do banco (igual para todas as réplicas).
- *
- * ponytail: janela fixa (não deslizante) e limpeza a cada `LIMPAR_A_CADA`
- * chamadas por réplica; Redis só se o banco sentir o volume.
+ * Limpeza a cada `LIMPAR_A_CADA` chamadas por réplica; Redis só se o banco
+ * sentir o volume.
  */
 export class ThrottlerPostgres implements ThrottlerStorage {
   private chamadas = 0;

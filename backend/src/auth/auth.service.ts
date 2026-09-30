@@ -43,7 +43,7 @@ import { Usuario } from './usuario.entity';
 const ENVIOS_POR_HORA = 3;
 const HORA_MS = 3_600_000;
 const MINUTO_MS = 60_000;
-/** QA-100: renovações por sessão (família) por minuto. */
+/** Renovações por sessão (família) por minuto. */
 const REFRESH_POR_SESSAO = 20;
 
 const UUID_RE =
@@ -143,7 +143,7 @@ export class AuthService {
     exigirProdutoDisponivel(dto.produto);
     const email = normalizarEmail(dto.email);
     const ip = ctx.ip ?? '';
-    // QA-003: só as falhas contam (por IP + e-mail e por IP); 429 antes do bcrypt.
+    // Só as falhas contam (por IP + e-mail e por IP); 429 antes do bcrypt.
     await this.tentativas.exigirLoginLiberado(ip, email);
     const r = await this.autenticar(dto, email, ctx).catch(
       async (e: unknown) => {
@@ -158,7 +158,7 @@ export class AuthService {
     return r;
   }
 
-  /** L-24: falha de login com IP (e a pessoa, se o e-mail existe; nunca o e-mail). */
+  /** Falha de login na trilha: IP e a pessoa, se o e-mail existe (nunca o e-mail). */
   private async registrarFalha(
     dto: LoginDto,
     email: string,
@@ -211,7 +211,7 @@ export class AuthService {
       };
     }
     const [l] = linhas;
-    // L-07: com 2FA (ou exigido pela clínica), falta o código do app.
+    // Com 2FA (ou exigido pela clínica), falta o código do app.
     const desafio = await this.doisFatores.desafioSeNecessario(usuario.id, {
       produto: dto.produto,
       tenantId: l.tenant_id,
@@ -227,9 +227,8 @@ export class AuthService {
   }
 
   /**
-   * 2º passo do login (L-07): o código do app (ou de recuperação) contra o
-   * desafio da senha. Configurou agora → devolve também os códigos de
-   * recuperação.
+   * 2º passo do login: o código do app (ou de recuperação) contra o desafio
+   * da senha. Quem configurou agora recebe também os códigos de recuperação.
    */
   async loginComCodigo(
     desafio: string,
@@ -304,7 +303,7 @@ export class AuthService {
     refreshToken: string,
     ctx: ContextoAcesso = {},
   ): Promise<SessaoEmitida> {
-    // QA-100: limite por sessão ANTES de consumir — o 429 não gasta o refresh
+    // Limite por sessão ANTES de consumir: o 429 não gasta o refresh.
     const daSessao = await this.sessoes.familiaDo(refreshToken);
     if (
       daSessao &&
@@ -361,7 +360,7 @@ export class AuthService {
    */
   async forgotPassword(email: string): Promise<void> {
     const normalizado = normalizarEmail(email);
-    // QA-003: até 3 e-mails por hora para o mesmo endereço (o limite por IP,
+    // Até 3 e-mails por hora para o mesmo endereço (o limite por IP,
     // generoso, fica no controller). Acima disso, a mesma resposta, sem envio.
     const permitido = await this.tentativas.permitir(
       'forgot-email',
@@ -420,14 +419,14 @@ export class AuthService {
       },
     );
     if (!r.affected) throw invalido;
-    // Definir a senha aceita os convites de quem não tinha senha; os de aceite
-    // (quem já tinha conta — QA-004) só pelo link deles.
+    // Definir a senha aceita os convites de quem não tinha senha; os de quem
+    // já tinha conta só pelo link de aceite.
     await this.acessos.update(
       { usuarioId: usuario.id, convitePendente: true, conviteHash: IsNull() },
       { convitePendente: false },
     );
     await this.sessoes.revogarDaPessoa(usuario.id);
-    // QA-206: com IP e navegador, na trilha de cada clínica da pessoa.
+    // Com IP e navegador, na trilha de cada clínica da pessoa.
     await this.audit.registrarDaPessoa(usuario.id, 'redefinir-senha', ctx);
   }
 
@@ -517,7 +516,7 @@ export class AuthService {
   }
 
   /**
-   * Aceite do convite de quem já tem conta (QA-004), pelo botão da página do
+   * Aceite do convite de quem já tem conta, pelo botão da página do
    * front (`POST`; um leitor de links não aceita sozinho). Consumo atômico. O
    * hash fica gravado depois do aceite para o link reaberto dizer "já aceito".
    */
@@ -620,7 +619,7 @@ export class AuthService {
     if (!usuario?.emailConfirmacaoHash) {
       throw new ConflictException('O e-mail já está confirmado.');
     }
-    // QA-003: por pessoa (o limite por IP, generoso, fica no controller).
+    // Por pessoa (o limite por IP, generoso, fica no controller).
     const permitido = await this.tentativas.permitir(
       'reenviar-confirmacao',
       usuario.id,

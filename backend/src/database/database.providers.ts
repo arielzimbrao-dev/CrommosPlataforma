@@ -95,7 +95,7 @@ const repositorio = (token: string, entidade: EntityTarget<ObjectLiteral>) => ({
 });
 
 /**
- * Providers de banco (padrão DATA_SOURCE, como no Clinic): um `DataSource`
+ * Providers de banco (padrão DATA_SOURCE): um `DataSource`
  * inicializado no boot, as migrations SQL bloqueantes (falha derruba o boot) e
  * um provider de repositório por entidade. Sem `synchronize`: o schema vem só
  * das migrations.

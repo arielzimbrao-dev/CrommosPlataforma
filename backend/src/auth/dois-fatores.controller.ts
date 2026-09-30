@@ -40,7 +40,7 @@ export class ExigenciaDto {
 }
 
 /**
- * Verificação em duas etapas (L-07, docs/contrato.md): a pessoa liga e
+ * Verificação em duas etapas (docs/contrato.md): a pessoa liga e
  * desliga em Meu perfil; o admin da clínica exige (admin e quem vê
  * prontuário) e desliga o de quem perdeu o celular.
  */

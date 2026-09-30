@@ -19,9 +19,8 @@ export function durationToMs(
 /**
  * Opções base do cookie de refresh. `path: '/auth'` limita o envio às rotas de
  * auth (refresh/logout). Em produção, Secure por padrão. SameSite/domain por env
- * cobrem deploy same-site (Lax) ou cross-site (None).
- * ponytail: SameSite=None exige HTTPS — não combinar COOKIE_SAMESITE=none com
- * COOKIE_SECURE=false, o navegador rejeitaria o cookie.
+ * cobrem deploy same-site (Lax) ou cross-site (None). SameSite=None exige
+ * HTTPS: com COOKIE_SECURE=false o navegador rejeitaria o cookie.
  */
 function baseOptions(): CookieOptions {
   const isProd = process.env.NODE_ENV === 'production';

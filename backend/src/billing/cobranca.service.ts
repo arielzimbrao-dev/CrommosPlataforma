@@ -132,7 +132,7 @@ export class CobrancaService {
       where: { cobrancaId: checkout.id },
     });
     // Checkout antigo (a fatura foi reduzida e ganhou outro): pelo externalId.
-    // ponytail: o pago a mais nesse caso não vira crédito; ajuste manual.
+    // O pago a mais nesse caso não vira crédito; o ajuste é manual.
     const f =
       porCobranca ??
       (checkout.externalId && UUID.test(checkout.externalId)

@@ -79,7 +79,7 @@ describe('SessoesService', () => {
     expect(audit.registrar).not.toHaveBeenCalled();
   });
 
-  it('consumir: refresh recém-rotacionado (outra aba, < 10 s) → par novo, sem revogar tudo (B1)', async () => {
+  it('consumir: refresh recém-rotacionado (outra aba, < 10 s) → par novo, sem revogar tudo', async () => {
     const { svc, sessoes, audit } = make();
     const { refreshToken } = await svc.emitir(alvo, 'jti-g');
     sessoes.findOne.mockResolvedValue({
@@ -114,7 +114,7 @@ describe('SessoesService', () => {
     );
   });
 
-  it('consumir: corrida em que a outra aba acabou de rotacionar → par novo (B1)', async () => {
+  it('consumir: corrida em que a outra aba acabou de rotacionar → par novo', async () => {
     const { svc, sessoes, audit } = make();
     const { refreshToken } = await svc.emitir(alvo, 'jti-c');
     const base = {

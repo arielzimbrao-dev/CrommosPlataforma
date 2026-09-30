@@ -15,7 +15,7 @@ export interface ITokenPayload {
   /** Só no refresh: id da sessão (`crommos.sessoes.jti`). */
   jti?: string;
   /**
-   * Só no access (QA-002): família da sessão (`crommos.sessoes.familia`). O
+   * Só no access: família da sessão (`crommos.sessoes.familia`). O
    * access vale enquanto a família tiver sessão vigente. Tokens antigos, sem
    * `sid`, valem até expirar (transição, ≤ 15 min).
    */

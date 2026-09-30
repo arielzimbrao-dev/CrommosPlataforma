@@ -16,7 +16,7 @@ export const FALHAS_POR_EMAIL = 5;
 /** Falhas de login por IP, todas as contas (varredura de e-mails). */
 export const FALHAS_POR_IP = 50;
 /**
- * S-06: falhas numa **conta** vindas de qualquer IP (botnet) na última hora. A
+ * Falhas numa **conta** vindas de qualquer IP (botnet) na última hora. A
  * partir daqui cada tentativa espera (dobra a cada falha, até 5 s) — atraso,
  * não bloqueio: um 429 por conta deixaria qualquer um travar o login do dono.
  */
@@ -37,7 +37,7 @@ const LOGIN_IP = 'login-falha-ip';
 const LOGIN_CONTA = 'login-falha-conta';
 
 /**
- * Limites que dependem do resultado ou do alvo (QA-003), guardados na mesma
+ * Limites que dependem do resultado ou do alvo, guardados na mesma
  * tabela do rate limit por IP (`crommos.rate_limit`, compartilhada entre as
  * réplicas; chaves com hash — sem e-mail nem IP em claro):
  *

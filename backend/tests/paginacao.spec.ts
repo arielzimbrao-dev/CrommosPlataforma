@@ -7,7 +7,7 @@ import {
   paginar,
 } from 'src/common/paginacao';
 
-describe('paginação (B13)', () => {
+describe('paginação', () => {
   it('padrão: 50 itens a partir do início', () => {
     expect(paginar({})).toEqual({ take: LIMITE_PADRAO, skip: 0 });
     expect(LIMITE_PADRAO).toBe(50);

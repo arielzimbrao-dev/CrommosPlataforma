@@ -76,7 +76,7 @@ describeDb('Conta (LGPD, integração)', () => {
     expect(r.body.auditoria.map((a: { action: string }) => a.action)).toContain(
       'login',
     );
-    // L-24: o registro de acesso vai com o IP na exportação.
+    // O registro de acesso vai com o IP na exportação.
     expect(
       r.body.auditoria.find((a: { action: string }) => a.action === 'login').ip,
     ).toBeTruthy();
@@ -132,7 +132,7 @@ describeDb('Conta (LGPD, integração)', () => {
     await criarPessoa(ds, { email: 'dono@x.com' });
   });
 
-  it('L-29: excluir pede ao produto que anonimize a cópia local; produto fora → pendente e o job tenta de novo', async () => {
+  it('excluir pede ao produto que anonimize a cópia local; produto fora → pendente e o job tenta de novo', async () => {
     const pendente = async (id: string) =>
       (
         await ds.query<{ p: string[] | null }[]>(

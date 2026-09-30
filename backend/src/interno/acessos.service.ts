@@ -54,7 +54,7 @@ export interface PessoaInternaView {
   emailConfirmado: boolean;
 }
 
-/** Token do link de aceite (QA-004): o valor vai no e-mail; o banco guarda o hash. */
+/** Token do link de aceite: o valor vai no e-mail; o banco guarda o hash. */
 function tokenDeAceite(): {
   token: string;
   campos: { conviteHash: string; conviteExpiraEm: Date };
@@ -87,7 +87,7 @@ const paraView = (a: Acesso): AcessoInternoView => ({
  * Convite: o acesso nasce `convitePendente` e fica fora do login até a pessoa
  * agir. Sem senha (e-mail novo, ou só convites pendentes): link de uso único
  * (7 dias, token da pessoa) para definir a senha em `POST
- * /auth/reset-password`. Já tem senha (QA-004): link de aceite (7 dias,
+ * /auth/reset-password`. Já tem senha: link de aceite (7 dias,
  * token do acesso) em `GET /auth/aceitar-convite`. A resposta é a mesma nos
  * dois casos (não revela se a conta existia).
  */
@@ -123,9 +123,6 @@ export class AcessosService {
           where: { usuarioId: existente.id, convitePendente: false },
         })
       : false;
-    // QA-004: todo convite fica pendente até a pessoa agir — quem não tem
-    // senha define a senha (token da pessoa); quem já tem aceita pelo link
-    // (token do acesso). A resposta é igual nos dois casos.
     const convite = temSenha ? null : gerarTokenUsoUnico(CONVITE_TTL_MS);
     const aceite = temSenha ? tokenDeAceite() : null;
     const senha = existente ? null : await senhaDescartavel();
@@ -158,7 +155,7 @@ export class AcessosService {
       },
     );
     await this.auditar(produto, dto.tenantId, 'convidar', usuario.id);
-    // B2: o acesso já está gravado; se o e-mail falhar, o produto grava o
+    // O acesso já está gravado; se o e-mail falhar, o produto grava o
     // vínculo mesmo assim e oferece "reenviar convite" (201, não 5xx).
     const envio = aceite
       ? this.enviarAceite(usuario, aceite.token, produto, dto.tenantId)
@@ -227,7 +224,7 @@ export class AcessosService {
     const acesso = await this.exigir(produto, dto.tenantId, dto.usuarioId);
     const desativando = dto.ativo === false && acesso.ativo;
     const reativando = dto.ativo === true && !acesso.ativo;
-    // QA-197: quem excluiu a conta não volta (nem ocupa assento).
+    // Quem excluiu a conta não volta (nem ocupa assento).
     if (
       reativando &&
       (await this.usuarios.exists({
@@ -278,7 +275,7 @@ export class AcessosService {
       where: { id: dto.usuarioId },
     });
     if (acesso.conviteHash !== null) {
-      // QA-004: link de aceite novo (o anterior deixa de valer).
+      // Link de aceite novo (o anterior deixa de valer).
       const { token, campos } = tokenDeAceite();
       await this.acessos.update({ id: acesso.id }, campos);
       await this.enviarAceite(usuario, token, produto, dto.tenantId);

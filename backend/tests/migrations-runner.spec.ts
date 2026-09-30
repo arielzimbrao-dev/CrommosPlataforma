@@ -231,7 +231,7 @@ describe('controle das migrations', () => {
   });
 });
 
-describe('B4: aguardar os schemas dos produtos (banco vazio)', () => {
+describe('aguardar os schemas dos produtos (banco vazio)', () => {
   const chaves = {
     CLINIC_API_URL: 'http://clinic',
     SERVICO_KEY_CLINIC: 'x'.repeat(32),

@@ -1,6 +1,6 @@
 /**
- * Cálculo **puro** do ciclo da assinatura e do ajuste pró-rata (ver
- * docs/billing-pro-rata.md). Datas são `YYYY-MM-DD`; dinheiro é calculado em
+ * Cálculo **puro** do ciclo da assinatura e do ajuste pró-rata. Datas são
+ * `YYYY-MM-DD`; dinheiro é calculado em
  * **centavos inteiros** e devolvido em R$ com 2 casas.
  *
  * Ciclo = [cicloInicio, cicloFim) — o fim é exclusivo (é o início do próximo).
@@ -114,7 +114,7 @@ export function aplicarCredito(valorBruto: number, saldo: number) {
 }
 
 /**
- * Redução no meio do ciclo (N-02): crédito só sobre valor **pago**. A redução
+ * Redução no meio do ciclo: crédito só sobre valor **pago**. A redução
  * abate primeiro as faturas **pendentes** do ciclo (na ordem dada); o que
  * sobrar vira crédito. O crédito que já estava aplicado numa fatura abatida e
  * deixa de caber nela volta ao saldo. Bruto 0 → a fatura deve ser cancelada.

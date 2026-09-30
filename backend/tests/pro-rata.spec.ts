@@ -326,7 +326,7 @@ describe('renovarCiclo', () => {
   });
 });
 
-describe('pró-rata — redução com fatura pendente (N-02)', () => {
+describe('pró-rata — redução com fatura pendente', () => {
   it('sem pendentes, a redução inteira vira crédito', () => {
     expect(abaterReducao(60, [])).toEqual({ faturas: [], credito: 60 });
   });

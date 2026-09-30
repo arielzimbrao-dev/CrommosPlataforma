@@ -17,7 +17,7 @@ const USUARIOS = 'Informe de 1 a 1000 usuários.';
 
 /** Pessoa a mais/a menos na simulação: o impacto na mensalidade. */
 export class PessoaSimuladaDto {
-  // QA-180: só os papéis do produto (os assentos dependem deles).
+  // Só os papéis do produto (os assentos dependem deles).
   @IsIn(PAPEIS, {
     message:
       'Papel inválido: use admin, gestor, recepcao, profissional ou financeiro.',
@@ -74,7 +74,7 @@ export class SimularDto {
   @Type(() => PessoaSimuladaDto)
   adicionar?: PessoaSimuladaDto;
 
-  /** QA-167: pessoa a menos (desativar; trocar o papel = remover + adicionar). */
+  /** Pessoa a menos (desativar; trocar o papel = remover + adicionar). */
   @IsOptional()
   @ValidateNested()
   @Type(() => PessoaSimuladaDto)

@@ -28,10 +28,9 @@ import { ProdutoServico, ServicoKeyGuard } from './servico-key.guard';
 
 /**
  * API interna chamada pelos produtos (`X-Servico-Key`). Fora do access token
- * (`@IsPublic`). S-07: limite próprio por IP, generoso (todo o tráfego vem dos
- * produtos) — segura força bruta na chave e laço de um produto com defeito.
- * Restringir /interno à rede interna do Coolify é decisão de infra
- * (docs/seguranca/revisao-2026-09.md do Clinic).
+ * (`@IsPublic`). Limite próprio por IP, generoso (todo o tráfego vem dos
+ * produtos): segura força bruta na chave e laço de um produto com defeito.
+ * Restringir /interno à rede interna do Coolify é decisão de infra.
  */
 @ApiTags('interno')
 @IsPublic()

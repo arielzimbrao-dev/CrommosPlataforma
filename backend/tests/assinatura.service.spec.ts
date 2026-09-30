@@ -94,7 +94,7 @@ function make(
 }
 
 describe('AssinaturaService — gating e leitura', () => {
-  it('sem assinatura → nenhum módulo (fail-closed, B5)', async () => {
+  it('sem assinatura → nenhum módulo (fail-closed)', async () => {
     const { svc, repo } = make(null);
     await expect(svc.getModulosAtivos(ATOR)).resolves.toEqual([]);
     expect(repo.findOne).toHaveBeenCalledWith({
@@ -297,7 +297,7 @@ describe('AssinaturaService.simular', () => {
     );
   });
 
-  it('QA-167: remover e trocar o papel (remover + adicionar) de uma pessoa', async () => {
+  it('remover e trocar o papel (remover + adicionar) de uma pessoa', async () => {
     const { svc } = make(assinatura(), [
       ...equipe(4),
       { papel: 'recepcao', clinico: false },
@@ -347,7 +347,7 @@ describe('AssinaturaService.simular', () => {
     expect(r).not.toHaveProperty('ajusteFaixa');
   });
 
-  it('N-02: redução mostra quanto abate da fatura pendente e quanto vira crédito', async () => {
+  it('redução mostra quanto abate da fatura pendente e quanto vira crédito', async () => {
     const { svc, faturas } = make(assinatura({ modulosAtivos: AGENDA_PRONT }));
     faturas.find.mockResolvedValue([{ valorBruto: 50, creditoAplicado: 0 }]);
     // 239,72 → 119,86: 59,93 de redução; 50 abatem a pendente, 9,93 viram crédito
@@ -396,7 +396,7 @@ describe('AssinaturaService.simular', () => {
       HOJE,
     );
 
-  it('QA-006: trial expirado (modo leitura) → 1ª fatura = 1º ciclo a partir de hoje', async () => {
+  it('trial expirado (modo leitura) → 1ª fatura = 1º ciclo a partir de hoje', async () => {
     const r = await simularAgenda2(
       assinatura({
         cicloInicio: '2026-09-01',
@@ -413,7 +413,7 @@ describe('AssinaturaService.simular', () => {
     });
   });
 
-  it('QA-006: trial ativo → 1ª fatura = a do fim do trial (semestral: 6 meses)', async () => {
+  it('trial ativo → 1ª fatura = a do fim do trial (semestral: 6 meses)', async () => {
     const { svc } = make(
       assinatura({ cicloFim: '2026-09-30', emTrialAte: '2026-09-30' }),
       equipe(2),
@@ -431,7 +431,7 @@ describe('AssinaturaService.simular', () => {
     });
   });
 
-  it('QA-006: assinatura paga (fora do trial) → sem 1ª fatura', async () => {
+  it('assinatura paga (fora do trial) → sem 1ª fatura', async () => {
     const r = await simularAgenda2(assinatura());
     expect(r.primeiraFatura).toBeNull();
   });
@@ -570,7 +570,7 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
     await expect(svc.getCurrent(ATOR)).resolves.toBeDefined();
   });
 
-  it('N-02: upgrade → downgrade sem pagar cancela a complementar e não gera crédito', async () => {
+  it('upgrade → downgrade sem pagar cancela a complementar e não gera crédito', async () => {
     // 255 → 127,50: −127,50 × 15/30 = 63,75, a complementar pendente de 63,75
     const { svc, fatRepo, assinRepo, audit } = make(
       assinatura({ modulosAtivos: AGENDA_PRONT }),
@@ -623,7 +623,7 @@ describe('AssinaturaService.upsert (pró-rata)', () => {
     );
   });
 
-  it('N-02: redução parcial só reduz a pendente; crédito devolvido quita e marca paga', async () => {
+  it('redução parcial só reduz a pendente; crédito devolvido quita e marca paga', async () => {
     const { svc, fatRepo, audit } = make(
       assinatura({ modulosAtivos: AGENDA_PRONT }),
     );
@@ -759,7 +759,7 @@ describe('AssinaturaService — faturas', () => {
     });
   });
 
-  it('pagarPelaPlataforma: baixa fora do tenant, condicional e auditada (N-01)', async () => {
+  it('pagarPelaPlataforma: baixa fora do tenant, condicional e auditada', async () => {
     const { svc, faturas, audit, ds } = make();
     const paga = { id: 'f1', tenantId: TENANT, status: 'paga' };
     faturas.findOne.mockResolvedValue(paga);

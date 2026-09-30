@@ -17,7 +17,7 @@ import { comLockGlobal } from '../common/lock-global';
 import { configProduto, type Produto } from '../common/produtos';
 import { ProvisionamentoClient } from '../signup/provisionamento.client';
 
-/** Exclusões re-tentadas por rodada do job; o resto fica para a próxima. */
+/** Exclusões re-tentadas por execução do job; o resto fica para a próxima. */
 const LOTE_EXCLUSOES = 100;
 
 /** Dados da pessoa guardados pela plataforma (LGPD art. 18, II e V). */
@@ -53,7 +53,7 @@ export interface ExportacaoConta {
     tenantId: string | null;
     action: string;
     resource: string;
-    /** Registros de acesso (L-24): IP e navegador. */
+    /** Registros de acesso: IP e navegador. */
     ip: string | null;
     navegador: string | null;
     em: Date;
@@ -189,11 +189,11 @@ export class ContaService {
     });
     await this.sessoes.revogarDaPessoa(usuarioId);
     await this.registrar(usuarioId, 'excluir-conta');
-    // L-29: a cópia de nome/e-mail nos produtos; falhou → o job repete.
+    // A cópia de nome/e-mail nos produtos; falhou → o job repete.
     await this.propagarExclusao(usuarioId);
   }
 
-  /** L-29: re-tenta as exclusões pendentes nos produtos (uma réplica por vez). */
+  /** Re-tenta as exclusões pendentes nos produtos (uma réplica por vez). */
   @Cron(CronExpression.EVERY_10_MINUTES)
   async cronExclusoes(): Promise<void> {
     const n = await comLockGlobal(this.ds, 'plataforma-exclusoes', () =>
@@ -202,7 +202,7 @@ export class ContaService {
     if (n) this.logger.log(`Exclusões de conta propagadas: ${n}`);
   }
 
-  /** Devolve quantas pessoas ficaram sem pendência nesta rodada. */
+  /** Devolve quantas pessoas ficaram sem pendência nesta execução. */
   async reenviarExclusoes(): Promise<number> {
     const linhas = await this.ds.query<{ id: string }[]>(
       `SELECT id FROM crommos.usuarios

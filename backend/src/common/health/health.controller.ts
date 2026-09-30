@@ -17,12 +17,8 @@ export interface HealthStatus {
 }
 
 /**
- * Health check da aplicação.
- *
- * Intencionalmente NÃO depende de banco de dados: o endpoint precisa responder
- * para o healthcheck do Coolify/Docker mesmo quando o DB ainda está conectando.
- * Quando houver checagens de dependências (DB, cache, etc.), adicionar um
- * endpoint separado (ex.: /health/ready) sem alterar este liveness probe.
+ * Liveness: não depende do banco, para o healthcheck do Coolify/Docker
+ * responder mesmo com o banco ainda conectando. O banco fica no `/health/ready`.
  */
 @ApiTags('System')
 @Controller('health')

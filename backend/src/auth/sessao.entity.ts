@@ -29,7 +29,7 @@ export class Sessao {
   revogadaEm!: Date | null;
 
   /**
-   * Família (QA-002): jti da 1ª sessão do login, herdado nas rotações. É o
+   * Família: jti da 1ª sessão do login, herdado nas rotações. É o
    * `sid` do access token (migration 08).
    */
   @Column({ type: 'uuid', nullable: true })
