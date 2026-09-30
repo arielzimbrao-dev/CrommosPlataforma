@@ -54,7 +54,7 @@ export interface SessaoResponse {
 const MINUTO = 60_000;
 const HORA = 3_600_000;
 
-/** L-24: IP (`trust proxy` conforme TRUST_PROXY, main.ts) e navegador. */
+/** IP (`trust proxy` conforme TRUST_PROXY, main.ts) e navegador. */
 export const contextoDe = (req: Request): ContextoAcesso => ({
   ip: req.ip,
   userAgent: req.headers['user-agent'],
@@ -73,7 +73,7 @@ export function responderSessao(
 }
 
 /**
- * Login único e senha (docs/contrato.md). Rate limits (QA-003): por IP,
+ * Login único e senha (docs/contrato.md). Rate limits: por IP,
  * generosos (a clínica inteira sai pelo mesmo NAT) — login 60/min, forgot
  * 30/h, reenviar confirmação 20/h, reset 10/h; por alvo, no AuthService — 5
  * falhas de login por IP + e-mail (e 50 por IP) em 15 min, 3 e-mails por
@@ -100,7 +100,7 @@ export class AuthController {
   ): Promise<SessaoResponse | EscolherClinica | DesafioDoisFatores> {
     const r = await this.auth.login(dto, contextoDe(req));
     // Mais de uma clínica: sem sessão; o cliente refaz com o `tenantId`.
-    // Com 2FA (L-07): sem sessão; o cliente manda o código ao /login/codigo.
+    // Com 2FA: sem sessão; o cliente manda o código ao /login/codigo.
     return 'escolherClinica' in r || 'doisFatores' in r
       ? r
       : responderSessao(res, r);
@@ -129,7 +129,7 @@ export class AuthController {
       : responderSessao(res, s);
   }
 
-  // QA-100: por IP, generoso (a clínica inteira atrás de um NAT renova junto);
+  // Por IP, generoso (a clínica inteira atrás de um NAT renova junto);
   // o limite estrito é por sessão (20/min, no AuthService). O 429 não encerra
   // a sessão: o refresh não é consumido e o cliente tenta de novo.
   @Throttle({ default: { ttl: MINUTO, limit: 300 } })
@@ -215,7 +215,7 @@ export class AuthController {
   }
 
   /**
-   * Link antigo do e-mail de convite (QA-004): não aceita mais sozinho (um
+   * Link antigo do e-mail de convite: não aceita mais sozinho (um
    * leitor de links aceitaria). Só leva à página do front, que tem o botão.
    */
   @Throttle({ default: { ttl: HORA, limit: 20 } })
@@ -248,7 +248,7 @@ export class AuthController {
   }
 
   /**
-   * L-24: acessos da equipe (login, falhas, refresh, senha, logout) dos
+   * Acessos da equipe (login, falhas, refresh, senha, logout) dos
    * últimos 90 dias, com IP e navegador. Só o admin da clínica.
    */
   @ApiBearerAuth()

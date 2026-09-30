@@ -7,7 +7,7 @@ import { SessoesService } from './sessoes.service';
 
 /**
  * Limpeza diária (uma réplica por vez): sessões de refresh vencidas e
- * registros de acesso além da retenção (L-24, `RETENCAO_REGISTROS_ACESSO_DIAS`).
+ * registros de acesso além da retenção (`RETENCAO_REGISTROS_ACESSO_DIAS`).
  */
 @Injectable()
 export class SessoesCron {

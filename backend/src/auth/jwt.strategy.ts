@@ -37,8 +37,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     ) {
       throw new UnauthorizedException('Token inválido.');
     }
-    // QA-002: logout/senha/desativação derrubam o access na hora. Sem `sid`
-    // (emitido antes desta versão): vale até expirar.
+    // Logout/senha/desativação derrubam o access na hora. Sem `sid` (token
+    // antigo): vale até expirar.
     if (
       payload.sid &&
       !(await this.sessoes.sessaoVigente(payload.sid, payload.sub))

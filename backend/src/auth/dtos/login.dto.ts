@@ -33,7 +33,7 @@ export class LoginDto {
   tenantId?: string;
 }
 
-/** 2º passo do login com 2FA (L-07). */
+/** 2º passo do login com 2FA. */
 export class LoginCodigoDto {
   @IsString()
   @MinLength(10)

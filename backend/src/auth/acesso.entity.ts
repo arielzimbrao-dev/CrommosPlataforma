@@ -45,7 +45,7 @@ export class Acesso {
   clinico!: boolean;
 
   /**
-   * QA-004: convite de quem já tem senha — hash do token do link de aceite
+   * Convite de quem já tem senha: hash do token do link de aceite
    * (`GET /auth/aceitar-convite`) e validade (migration 09). `null` no
    * convite de quem não tem senha (o token é o da pessoa).
    */

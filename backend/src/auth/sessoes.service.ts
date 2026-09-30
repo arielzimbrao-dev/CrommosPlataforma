@@ -31,7 +31,7 @@ const REFRESH_PADRAO_MS = 7 * 24 * 60 * 60 * 1000;
 /** Sessões vencidas há mais de 1 dia saem na limpeza diária. */
 const RETENCAO_VENCIDAS_MS = 24 * 60 * 60 * 1000;
 /**
- * B1: várias abas renovam ao mesmo tempo com o mesmo cookie. Reapresentar um
+ * Várias abas renovam ao mesmo tempo com o mesmo cookie. Reapresentar um
  * refresh rotacionado há menos disto é concorrência, não roubo: ganha um par
  * novo (sessão própria) em vez de derrubar todas as sessões da pessoa.
  */
@@ -67,7 +67,7 @@ export class SessoesService {
   /**
    * Emite access + refresh e grava a sessão (hash do refresh). `familia` =
    * a do login (rotação) ou, num login novo, o próprio jti; vai no access como
-   * `sid` (QA-002).
+   * `sid`.
    */
   async emitir(
     alvo: AlvoSessao,
@@ -105,7 +105,7 @@ export class SessoesService {
   }
 
   /**
-   * QA-002: o access com `sid` só vale enquanto a família tiver uma sessão
+   * O access com `sid` só vale enquanto a família tiver uma sessão
    * vigente da pessoa (índice `idx_sessoes_familia`, uma consulta).
    */
   sessaoVigente(sid: string, usuarioId: string): Promise<boolean> {
@@ -119,8 +119,7 @@ export class SessoesService {
     });
   }
 
-  /** Claims de um refresh válido (assinatura, validade, `typ` e `jti`), ou `null`. */
-  /** Família da sessão do refresh (limite de renovações, QA-100); `null` se inválido. */
+  /** Família da sessão do refresh (limite de renovações); `null` se inválido. */
   async familiaDo(token: string): Promise<string | null> {
     const p = await this.lerRefresh(token);
     if (!p) return null;
@@ -131,6 +130,7 @@ export class SessoesService {
     return s ? (s.familia ?? s.jti) : null;
   }
 
+  /** Claims de um refresh válido (assinatura, validade, `typ` e `jti`), ou `null`. */
   async lerRefresh(token: string): Promise<ITokenPayload | null> {
     try {
       const p = await this.jwt.verifyAsync<ITokenPayload>(token);
@@ -144,9 +144,9 @@ export class SessoesService {
    * Consome o refresh (rotação): confere a sessão e a revoga atomicamente,
    * apontando a substituta (`jtiNovo`, a usar no `emitir`) — o UPDATE só casa
    * se ela ainda estiver vigente. Refresh rotacionado há menos de
-   * `TOLERANCIA_ROTACAO_MS` (outra aba) ganha um par novo. Depois disso, **já
-   * rotacionado** reapresentado = reuso (token vazado ou replay): revoga todas as sessões da pessoa. Sessão
-   * revogada por logout/senha/desativação só dá 401.
+   * `TOLERANCIA_ROTACAO_MS` (outra aba) ganha um par novo. Depois disso, já
+   * rotacionado reapresentado = reuso (token vazado ou replay): revoga todas as
+   * sessões da pessoa. Sessão revogada por logout/senha/desativação só dá 401.
    */
   async consumir(
     token: string,
@@ -204,7 +204,7 @@ export class SessoesService {
 
   /**
    * Logout: revoga a sessão do refresh apresentado **e a família dela** (as
-   * abas que renovaram juntas — B1), derrubando o access na hora (QA-002).
+   * abas que renovaram juntas), derrubando o access na hora.
    * Nunca falha (token inválido ou já revogado = nada a fazer). Devolve as
    * claims se revogou.
    */

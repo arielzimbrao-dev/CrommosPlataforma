@@ -42,7 +42,7 @@ export class Usuario extends BaseEntity {
   passwordResetExpiresAt?: Date | null;
 
   /**
-   * Signup com e-mail ainda não confirmado (N-24): SHA-256 do token do link.
+   * Signup com e-mail ainda não confirmado: SHA-256 do token do link.
    * `null` = confirmado ou não se aplica.
    */
   @Column({
@@ -53,7 +53,7 @@ export class Usuario extends BaseEntity {
   })
   emailConfirmacaoHash?: string | null;
 
-  /** Validade do link de confirmação (N-24). */
+  /** Validade do link de confirmação. */
   @Column({
     name: 'email_confirmacao_expira_em',
     type: 'timestamptz',

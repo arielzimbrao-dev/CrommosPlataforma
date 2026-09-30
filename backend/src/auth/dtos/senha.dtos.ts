@@ -64,7 +64,7 @@ export class AceitarConviteDto {
   token!: string;
 }
 
-/** `GET /auth/acessos` (L-24): paginação e, opcional, uma pessoa. */
+/** `GET /auth/acessos`: paginação e, opcional, uma pessoa. */
 export class ListarAcessosDto extends PaginacaoDto {
   @IsOptional()
   @IsUUID()
