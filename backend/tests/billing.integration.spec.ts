@@ -104,7 +104,7 @@ describeDb('Billing (integração)', () => {
         .set(como(papel))
         .send({ modulos: ['agenda'], plano: 'mensal' })
         .expect(201)
-        // QA-006: fora do trial não há "1ª fatura" a mostrar.
+        // Fora do trial não há "1ª fatura" a mostrar.
         .expect((r) => expect(r.body.primeiraFatura).toBeNull());
     }
     await http().get('/assinatura').set(como('gestor')).expect(403);
@@ -200,7 +200,7 @@ describeDb('Billing (integração)', () => {
       .set(como('admin'))
       .send({ modulos: [], plano: 'mensal', adicionar: { papel: 'X!' } })
       .expect(400);
-    // QA-180: papel fora da lista → 400 com a lista dos papéis.
+    // Papel fora da lista → 400 com a lista dos papéis.
     const inexistente = await http()
       .post('/assinatura/simular')
       .set(como('admin'))
@@ -213,7 +213,7 @@ describeDb('Billing (integração)', () => {
     expect(inexistente.body.message).toEqual([
       'Papel inválido: use admin, gestor, recepcao, profissional ou financeiro.',
     ]);
-    // QA-167: desativar a recepção (remover) → 2 assentos de Agenda.
+    // Desativar a recepção (remover) → 2 assentos de Agenda.
     const sem = await http()
       .post('/assinatura/simular')
       .set(como('admin'))
@@ -338,7 +338,7 @@ describeDb('Billing (integração)', () => {
     expect(m.body.ativos).toEqual([]);
   });
 
-  it('QA-007: validação em pt-BR (nº de usuários fora da faixa)', async () => {
+  it('validação em pt-BR (nº de usuários fora da faixa)', async () => {
     for (const numeroUsuarios of [5000, -1]) {
       const r = await http()
         .post('/assinatura/simular')
@@ -357,7 +357,7 @@ describeDb('Billing (integração)', () => {
     ]);
   });
 
-  it('QA-005: fatura que vence hoje não é "vencida"; a partir de amanhã é', async () => {
+  it('fatura que vence hoje não é "vencida"; a partir de amanhã é', async () => {
     const T_HOJE = randomUUID();
     const a = await criarAssinatura(ds, { tenantId: T_HOJE });
     const p = await criarPessoa(ds, { email: 'vencehoje@bill.com' });

@@ -47,7 +47,7 @@ describe('SessoesCron', () => {
 
     await cron.run();
     expect(log).toHaveBeenCalledWith('Sessões vencidas removidas: 2');
-    // L-24: a purga dos registros de acesso vai no mesmo job.
+    // A purga dos registros de acesso vai no mesmo job.
     expect(log).toHaveBeenCalledWith('Registros de acesso além da retenção: 3');
   });
 

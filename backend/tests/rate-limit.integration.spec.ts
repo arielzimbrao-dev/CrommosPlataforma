@@ -7,8 +7,7 @@ import {
 import { InternoController } from 'src/interno/interno.controller';
 import { criarApp, fecharApp, mailFalso } from './support/app';
 
-/** Revisão de segurança 2026-09 (clinic docs/seguranca/revisao-2026-09.md). */
-describe('S-07: /interno com rate limit próprio', () => {
+describe('/interno com rate limit próprio', () => {
   it('não pula o throttler e tem limite por minuto', () => {
     expect(
       Reflect.getMetadata('THROTTLER:SKIPdefault', InternoController),
@@ -22,7 +21,7 @@ describe('S-07: /interno com rate limit próprio', () => {
   });
 });
 
-describe('S-06: atraso progressivo por conta', () => {
+describe('atraso progressivo por conta', () => {
   it('sem atraso até o limiar; depois dobra, com teto', () => {
     expect(atrasoPorFalhas(0)).toBe(0);
     expect(atrasoPorFalhas(9)).toBe(0);
@@ -36,52 +35,47 @@ describe('S-06: atraso progressivo por conta', () => {
 const describeDb =
   process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
 
-describeDb(
-  'S-06: falhas de login de vários IPs na mesma conta (integração)',
-  () => {
-    let app: INestApplication;
-    let tentativas: TentativasService;
-    jest.setTimeout(60_000);
+describeDb('falhas de login de vários IPs na mesma conta (integração)', () => {
+  let app: INestApplication;
+  let tentativas: TentativasService;
+  jest.setTimeout(60_000);
 
-    beforeAll(async () => {
-      ({ app } = await criarApp(mailFalso()));
-      tentativas = app.get(TentativasService);
-    });
+  beforeAll(async () => {
+    ({ app } = await criarApp(mailFalso()));
+    tentativas = app.get(TentativasService);
+  });
 
-    afterAll(() => fecharApp(app));
+  afterAll(() => fecharApp(app));
 
-    it('botnet: cada IP abaixo do limite, a conta ganha atraso (sem 429) e alerta no log', async () => {
-      const email = `alvo-${randomUUID()}@exemplo.com`;
-      const esperar = jest
-        .spyOn(
-          tentativas as unknown as { esperar: (ms: number) => Promise<void> },
-          'esperar',
-        )
-        .mockResolvedValue(undefined);
-      const warn = jest
-        .spyOn(Logger.prototype, 'warn')
-        .mockImplementation(() => undefined);
+  it('botnet: cada IP abaixo do limite, a conta ganha atraso (sem 429) e alerta no log', async () => {
+    const email = `alvo-${randomUUID()}@exemplo.com`;
+    const esperar = jest
+      .spyOn(
+        tentativas as unknown as { esperar: (ms: number) => Promise<void> },
+        'esperar',
+      )
+      .mockResolvedValue(undefined);
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
 
-      await tentativas.exigirLoginLiberado('198.51.100.1', email);
-      expect(esperar).not.toHaveBeenCalled();
+    await tentativas.exigirLoginLiberado('198.51.100.1', email);
+    expect(esperar).not.toHaveBeenCalled();
 
-      for (let i = 0; i < 12; i++) {
-        await tentativas.registrarFalhaLogin(`203.0.113.${i + 1}`, email);
-      }
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringMatching(/falhas de login/),
-      );
-      expect(JSON.stringify(warn.mock.calls)).not.toContain(email);
+    for (let i = 0; i < 12; i++) {
+      await tentativas.registrarFalhaLogin(`203.0.113.${i + 1}`, email);
+    }
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/falhas de login/));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(email);
 
-      await expect(
-        tentativas.exigirLoginLiberado('198.51.100.1', email),
-      ).resolves.toBeUndefined();
-      expect(esperar).toHaveBeenCalledWith(1_000);
-      // outra conta não é afetada
-      esperar.mockClear();
-      await tentativas.exigirLoginLiberado('198.51.100.1', `outra-${email}`);
-      expect(esperar).not.toHaveBeenCalled();
-      warn.mockRestore();
-    });
-  },
-);
+    await expect(
+      tentativas.exigirLoginLiberado('198.51.100.1', email),
+    ).resolves.toBeUndefined();
+    expect(esperar).toHaveBeenCalledWith(1_000);
+    // outra conta não é afetada
+    esperar.mockClear();
+    await tentativas.exigirLoginLiberado('198.51.100.1', `outra-${email}`);
+    expect(esperar).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});

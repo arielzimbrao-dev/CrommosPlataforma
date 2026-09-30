@@ -3,7 +3,7 @@ import {
   traduzirValidacao,
 } from 'src/common/exceptions/mensagens-validacao';
 
-describe('traduzirValidacao (QA-007: 400 do ValidationPipe em pt-BR)', () => {
+describe('traduzirValidacao (400 do ValidationPipe em pt-BR)', () => {
   it.each([
     ['email must be an email', 'email deve ser um e-mail válido.'],
     ['nome must be a string', 'nome deve ser um texto.'],
@@ -90,7 +90,7 @@ describe('traduzirValidacao (QA-007: 400 do ValidationPipe em pt-BR)', () => {
     );
   });
 
-  it('QA-180: mensagem própria de campo aninhado sai sem o caminho ("adicionar.")', () => {
+  it('mensagem própria de campo aninhado sai sem o caminho ("adicionar.")', () => {
     expect(traduzirMensagem('adicionar.Papel inválido.')).toBe(
       'Papel inválido.',
     );

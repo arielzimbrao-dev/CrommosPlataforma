@@ -44,11 +44,11 @@ describe('JwtStrategy', () => {
     await expect(
       strategy.validate({ ...base, extra: 1 } as never),
     ).resolves.toEqual(base);
-    // Sem sid (token anterior ao QA-002): não consulta a sessão.
+    // Sem sid (token antigo): não consulta a sessão.
     expect(sessoes.sessaoVigente).not.toHaveBeenCalled();
   });
 
-  it('QA-002: com sid, confere a sessão; família encerrada → 401', async () => {
+  it('com sid, confere a sessão; família encerrada → 401', async () => {
     await expect(strategy.validate({ ...base, sid: 's1' })).resolves.toEqual({
       ...base,
       sid: 's1',

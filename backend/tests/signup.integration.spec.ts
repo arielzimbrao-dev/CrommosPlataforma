@@ -117,7 +117,7 @@ describeDb('Signup (integração)', () => {
       expect.any(String),
     );
 
-    // QA-206: o signup e o 1º login gravam o IP (registros de acesso).
+    // O signup e o 1º login gravam o IP (registros de acesso).
     const semIp = await contar(
       `SELECT count(*)::int AS n FROM crommos.auditoria
         WHERE usuario_id = $1 AND action IN ('signup', 'login') AND ip IS NULL`,
@@ -193,7 +193,7 @@ describeDb('Signup (integração)', () => {
     await signup(corpo()).expect(201);
   });
 
-  describe('R2: outra clínica na mesma conta (POST /signup/clinica)', () => {
+  describe('outra clínica na mesma conta (POST /signup/clinica)', () => {
     const confirmar = (email: string) =>
       ds.query(
         `UPDATE crommos.usuarios SET email_confirmacao_hash = NULL WHERE email = $1`,
@@ -231,7 +231,7 @@ describeDb('Signup (integração)', () => {
         [[r1.body.acesso.tenantId, r2.body.acesso.tenantId]],
       );
       expect(clientes).toHaveLength(1);
-      // QA-206: 'nova-clinica' e o login na clínica nova com IP.
+      // 'nova-clinica' e o login na clínica nova com IP.
       const semIp = await ds.query<{ action: string; ip: string | null }[]>(
         `SELECT action, ip FROM crommos.auditoria
           WHERE usuario_id = $1 AND tenant_id = $2 ORDER BY created_at`,

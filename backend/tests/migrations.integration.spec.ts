@@ -288,7 +288,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
     }
   });
 
-  it('07: trials em andamento e não confirmados sobem para 5 usuários (QA-009)', async () => {
+  it('07: trials em andamento e não confirmados sobem para 5 usuários', async () => {
     const c = await conectar('crommos,public');
     try {
       await c.query(
@@ -337,7 +337,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
   );
 
   comClinic(
-    'B4: banco vazio com a plataforma subindo ANTES do Clinic — ela espera o schema do produto',
+    'banco vazio com a plataforma subindo ANTES do Clinic — ela espera o schema do produto',
     async () => {
       await resetar();
       const plat = await conectar('crommos,public');

@@ -1,6 +1,6 @@
 import { corsPermite, origensPermitidas } from 'src/common/http/cors';
 
-describe('CORS (BE-A4)', () => {
+describe('CORS', () => {
   it('normaliza a allowlist de FRONTEND_URL (CSV, sem barra final)', () => {
     expect(origensPermitidas(' https://a.com/, https://b.com ,')).toEqual([
       'https://a.com',

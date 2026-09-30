@@ -12,7 +12,7 @@ import {
 import { criarAcesso, criarAssinatura, criarPessoa } from './support/dados';
 
 /**
- * Tokens dos e-mails (sugestões da rodada 2 de QA): a página do front valida o
+ * Tokens dos e-mails: a página do front valida o
  * link ao abrir (`GET /auth/verificar-token`) e o aceite de convite é por botão
  * (`POST /auth/aceitar-convite`); o GET antigo só redireciona.
  */

@@ -14,7 +14,7 @@ import {
 } from './support/dados';
 
 /**
- * L-07: verificação em duas etapas (TOTP). Ligar em Meu perfil (chave + link,
+ * Verificação em duas etapas (TOTP). Ligar em Meu perfil (chave + link,
  * confirmar com um código, códigos de recuperação), login em dois passos,
  * código que não se reusa, limite de tentativas, desligar com a senha, e a
  * clínica que exige 2FA de admin e profissionais (o admin desliga o de quem
@@ -28,7 +28,7 @@ describeDb('Verificação em duas etapas (integração)', () => {
   let ds: DataSource;
   const T1 = randomUUID();
   const T2 = randomUUID();
-  const T3 = randomUUID(); // QA-195: clínica nova (trial) de quem ataca
+  const T3 = randomUUID(); // Clínica nova (trial) de quem ataca
   const mail = mailFalso();
   const ids: Record<string, string> = {};
 
@@ -294,7 +294,7 @@ describeDb('Verificação em duas etapas (integração)', () => {
       [ids.pro],
     );
     expect(a.usuario_id).toBe(ids.adm);
-    // QA-195: a pessoa é avisada por e-mail e o evento entra na trilha dela
+    // A pessoa é avisada por e-mail e o evento entra na trilha dela
     // em todas as clínicas em que trabalha (a do admin e a Clínica Dois).
     expect(mail.sendAvisoDoisFatoresDesligado).toHaveBeenCalledWith(
       'pro@2fa.com',
@@ -316,7 +316,7 @@ describeDb('Verificação em duas etapas (integração)', () => {
     ).toBeDefined();
   });
 
-  it('QA-195: admin de outra clínica que só convidou (ou desativou) a pessoa não desliga o 2FA dela nem vê o selo', async () => {
+  it('admin de outra clínica que só convidou (ou desativou) a pessoa não desliga o 2FA dela nem vê o selo', async () => {
     const d = (await login('pro').expect(200)).body.doisFatores
       .desafio as string;
     await codigo(d, await proximoCodigo('pro')).expect(200); // liga de novo

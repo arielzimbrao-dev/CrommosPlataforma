@@ -218,7 +218,7 @@ describeDb('Auth (integração)', () => {
       expect(n).toBeGreaterThanOrEqual(1);
     });
 
-    it('B1: duas abas renovando com o mesmo cookie → as duas ganham sessão, nada é revogado', async () => {
+    it('duas abas renovando com o mesmo cookie → as duas ganham sessão, nada é revogado', async () => {
       const l = await login({ email: 'bia@exemplo.com', tenantId: T2 }).expect(
         200,
       );
@@ -436,7 +436,7 @@ describeDb('Auth (integração)', () => {
     });
   });
 
-  describe('sessão no access token (QA-002)', () => {
+  describe('sessão no access token', () => {
     const http = () => request(app.getHttpServer());
     const claims = (token: string) =>
       new JwtService().decode<Record<string, unknown>>(token);
@@ -521,7 +521,7 @@ describeDb('Auth (integração)', () => {
     });
   });
 
-  describe('rate limit (QA-003)', () => {
+  describe('rate limit', () => {
     const http = () => request(app.getHttpServer());
 
     it('login: sucesso não consome (equipe atrás do mesmo IP)', async () => {
@@ -576,7 +576,7 @@ describeDb('Auth (integração)', () => {
       expect(mail.sendPasswordReset).toHaveBeenCalledTimes(3);
     });
 
-    it('QA-100: refresh — 20 por minuto por sessão → 429, e a sessão continua valendo', async () => {
+    it('refresh — 20 por minuto por sessão → 429, e a sessão continua valendo', async () => {
       const p = await criarPessoa(ds, { email: 'renova@exemplo.com' });
       await criarAcesso(ds, { usuarioId: p.id, tenantId: T1 });
       let c = cookieRefresh(
@@ -608,7 +608,7 @@ describeDb('Auth (integração)', () => {
       await http().post('/auth/refresh').set('Cookie', outra).expect(200);
     });
 
-    it('QA-100: o limite do refresh por IP comporta uma clínica atrás de NAT', () => {
+    it('o limite do refresh por IP comporta uma clínica atrás de NAT', () => {
       expect(
         Reflect.getMetadata(
           'THROTTLER:LIMITdefault',

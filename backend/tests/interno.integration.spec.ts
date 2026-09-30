@@ -131,7 +131,7 @@ describeDb('API interna de acessos (integração)', () => {
     expect(depois.convitePendente).toBe(false);
   });
 
-  it('QA-004: pessoa que já tem senha: convite pendente + e-mail de aceite (como a nova); só entra depois de aceitar', async () => {
+  it('pessoa que já tem senha: convite pendente + e-mail de aceite (como a nova); só entra depois de aceitar', async () => {
     const res = await interno('post', '/acessos')
       .send({
         tenantId: T1,
@@ -288,7 +288,7 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(400);
   });
 
-  it('QA-197: "Conta excluída" não volta a ativar (nem cobra assento); desativar segue', async () => {
+  it('"Conta excluída" não volta a ativar (nem cobra assento); desativar segue', async () => {
     const p = await criarPessoa(ds, { email: 'excluida@exemplo.com' });
     await criarAcesso(ds, { usuarioId: p.id, tenantId: T1, papel: 'gestor' });
     await ds.query(
@@ -309,7 +309,7 @@ describeDb('API interna de acessos (integração)', () => {
     expect(a.ativo).toBe(false);
   });
 
-  it('QA-004: aceite — link reenviado substitui o anterior; convite cancelado (desativado) ou expirado não aceita; reset de senha não aceita', async () => {
+  it('aceite — link reenviado substitui o anterior; convite cancelado (desativado) ou expirado não aceita; reset de senha não aceita', async () => {
     const p = await criarPessoa(ds, { email: 'aceite@exemplo.com' });
     await criarAcesso(ds, { usuarioId: p.id, tenantId: T2 });
     const aceitar = (token: string) =>
@@ -374,7 +374,7 @@ describeDb('API interna de acessos (integração)', () => {
     expect(r.body.message).toBe('Esta pessoa já aceitou o convite.');
   });
 
-  it('QA-001: em modo leitura (trial vencido) o produto ainda desativa acessos e reenvia convites', async () => {
+  it('em modo leitura (trial vencido) o produto ainda desativa acessos e reenvia convites', async () => {
     const T_LEITURA = randomUUID();
     await criarAssinatura(ds, {
       tenantId: T_LEITURA,
@@ -436,7 +436,7 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(404);
   });
 
-  it('convite registrado mas e-mail falhou → 201 { emailEnviado: false }; o acesso fica (reenviar resolve) — B2', async () => {
+  it('convite registrado mas e-mail falhou → 201 { emailEnviado: false }; o acesso fica (reenviar resolve)', async () => {
     mail.sendConvite.mockRejectedValueOnce(new Error('smtp'));
     const res = await interno('post', '/acessos')
       .send({
