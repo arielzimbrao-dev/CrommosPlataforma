@@ -11,17 +11,17 @@ Portado do backend do Clinic (auth, billing, runner de migrations, e-mail), sem 
 |---|---|
 | `src/main.ts` | Bootstrap: helmet, compression, CORS (`FRONTEND_URLS` ou `FRONTEND_URL`, com credenciais), cookie-parser, ValidationPipe (whitelist + forbidNonWhitelisted), Swagger opcional |
 | `src/app.module.ts` | Config (validação no boot), throttler, schedule, módulos |
-| `src/config` | `load-env.ts` (dotenv `.env.local` + `.env`) e `env.validation.ts` (falha no boot; confere o par RS256 e o par URL + chave de cada produto) |
+| `src/config` | `load-env.ts` (dotenv `.env.local` + `.env`) e `env.validation.ts` (falha no boot; confere o par RS256 e o par URL + chave de cada produto; lista completa das variáveis no `README.md`) |
 | `src/database` | DataSource (`search_path = crommos, public`), repositórios por token (`USUARIO_REPOSITORY`, `ACESSO_REPOSITORY`, …), `migrations-runner.ts` (lógica pura, testada) |
 | `database/migrations/NN-*.sql` | Schema `crommos`. Idempotentes, rodam no boot e bloqueiam; controle em `crommos._migrations`, advisory lock próprio (≠ Clinic) |
-| `src/auth` | Login único, tokens RS256 (`SessoesService`), refresh com rotação e reuso, senha, confirmação de e-mail, `JwtAuthGuard` + `AcessoGuard` (`@ExigeAcesso(...papeis)`) |
+| `src/auth` | Login único, tokens RS256 (`SessoesService`), refresh com rotação e reuso, senha, confirmação de e-mail, verificação em duas etapas (`dois-fatores.*`, `totp.ts`), registros de acesso (`GET /auth/acessos`), `JwtAuthGuard` + `AcessoGuard` (`@ExigeAcesso(...papeis)`) |
 | `src/signup` | `POST /signup`: transação + provisionamento no produto (`ProvisionamentoClient`) com compensação |
 | `src/interno` | API interna para os produtos (`ServicoKeyGuard`, `X-Servico-Key` → produto): acessos, convite, pessoa |
 | `src/billing` | Catálogo, `AssinaturaService` (pró-rata, faturas, renovação, fim do trial, inadimplência), `situacao.ts` (modo leitura), `CobrancaService` + `AbacatePayClient` (link de pagamento e webhook), baixa pelo backoffice |
 | `src/mail` | `MailService` + `EmailProvider` (Resend, API HTTP; stub sem `RESEND_API_KEY`) |
-| `src/conta` | LGPD da pessoa: `GET /conta/dados` (exportar) e `POST /conta/excluir` (anonimiza; recusa o último admin) |
-| `src/audit` | `AuditService.registrar()` → `crommos.auditoria` |
-| `src/common` | Produtos (`configProduto`, `produtoDaChave`), segredo (sha256, comparação em tempo constante), CPF/CNPJ, datas BR, lock global, filtro de exceções, health (`/health`, `/health/ready`), CORS, `ThrottlerPostgres` (rate limit compartilhado), `log/` (logs JSON + request-id) |
+| `src/conta` | LGPD da pessoa: `GET /conta/dados` (exportar: pessoa, acessos, sessões, auditoria com IP) e `POST /conta/excluir` (anonimiza, propaga aos produtos; recusa o último admin) |
+| `src/audit` | `AuditService.registrar()` → `crommos.auditoria` (com `ip`, `user_agent` e alvo em `resource_id`); purga dos registros de acesso (`RETENCAO_REGISTROS_ACESSO_DIAS`) |
+| `src/common` | Produtos (`configProduto`, `produtoDaChave`), segredo (sha256, comparação em tempo constante), cifra de campo (`crypto/cifra.ts`, AES-256-GCM), CPF/CNPJ, datas BR, lock global, filtro de exceções (tudo em pt-BR, `no-store`), health (`/health`, `/health/ready`), CORS, `ThrottlerPostgres` (rate limit compartilhado), `log/` (logs JSON + request-id) |
 | `tests/` | Unit (`*.spec.ts`) e integração (`*.integration.spec.ts`); `tests/support` (app, dados, stub HTTP do produto) |
 
 ## Como rodar
@@ -71,7 +71,7 @@ npm ci && npm run start:dev
   Quem já tem senha → token de 7 dias no acesso (`convite_hash`); o e-mail leva à página do front
   (`/aceitar-convite`), que aceita por botão em `POST /auth/aceitar-convite` (o `GET` antigo só
   redireciona: leitor de links não aceita sozinho). O hash fica depois do aceite, para o link
-  reaberto responder "já aceito". A resposta do convite é igual nos dois casos (QA-004).
+  reaberto responder "já aceito". A resposta do convite é igual nos dois casos.
 - **Links de e-mail:** `GET /auth/verificar-token` diz se o token vale (sem consumir) para a página
   avisar ao abrir: e-mail, nome da clínica do convite, ou `motivo` (`expirado`/`usado`/`invalido`).
 - **Billing:** mesmas regras do Clinic (pró-rata em `billing/pro-rata.ts`, não duplicar; redução abate
@@ -83,9 +83,13 @@ npm ci && npm run start:dev
   o produto criar o schema dele (senão o `search_path` do produto pode cair no `crommos`) — o boot
   **espera** por isso sozinho (`aguardarSchemas`, `DB_AGUARDAR_SCHEMAS`).
 - **Produção:** `FRONTEND_URL` e `API_URL` obrigatórias; CORS nunca abre com a lista vazia; chaves
-  RS256 conferidas no boot.
+  RS256 conferidas no boot; `trust proxy` de 1 hop (fora de produção, só com `TRUST_PROXY=true`)
+  para o IP real no rate limit e nos registros de acesso.
+- **Erros:** o `AllExceptionsFilter` responde sempre em pt-BR e com `Cache-Control: no-store` —
+  validação (`mensagens-validacao.ts`), JSON malformado, parâmetro com `%` inválido, rota
+  inexistente e throttler; erro inesperado vira 500 genérico (detalhe só no log).
 - Dinheiro em `numeric`, conta em centavos inteiros. Datas "só dia" em `America/Sao_Paulo`.
-- **Refresh em várias abas (B1):** refresh rotacionado há < 10 s (`TOLERANCIA_ROTACAO_MS`) ganha
+- **Refresh em várias abas:** refresh rotacionado há < 10 s (`TOLERANCIA_ROTACAO_MS`) ganha
   par novo; depois disso é reuso.
 - **Modo leitura:** trial vencido sem confirmação (`trial_confirmado_em`) ou `inadimplente_desde`
   (job diário depois da renovação; `baixar()` recalcula o tenant). `PATCH /assinatura` confirma o
@@ -94,21 +98,28 @@ npm ci && npm run start:dev
   O webhook precisa do corpo cru (`rawBody: true` no `main.ts` e no `criarApp` dos testes).
 - **Réplicas:** rate limit em `crommos.rate_limit` (`ThrottlerPostgres`), jobs com `comLockGlobal`,
   migrations com advisory lock; nada de estado em memória entre requisições.
-- **Login contra botnet (S-06):** além de IP e IP+e-mail, falhas por conta na última hora; a partir
+- **Login contra botnet:** além de IP e IP+e-mail, falhas por conta na última hora; a partir
   de 10, atraso progressivo (250 ms → 5 s, `TentativasService.esperar`) e alerta no log — nunca 429
-  por conta (seria DoS contra o dono). `/interno` tem limite próprio (600/min por IP, S-07).
-- **Banco vazio (B4):** `aguardarSchemas` antes das migrations (produção: produtos configurados).
-- **2FA (L-07, migration 13):** TOTP próprio (`auth/totp.ts`, RFC 6238 com `node:crypto`), segredo
+  por conta (seria DoS contra o dono). `/interno` tem limite próprio (600/min por IP).
+- **Banco vazio:** `aguardarSchemas` antes das migrations (produção: produtos configurados).
+- **2FA (migration 13):** TOTP próprio (`auth/totp.ts`, RFC 6238 com `node:crypto`), segredo
   cifrado (`common/crypto/cifra.ts`, `DATA_ENCRYPTION_KEY`; sem ela, ligar = 503). Login com 2FA =
   `{ doisFatores: { desafio } }` (JWT `typ: '2fa'`, 5 min — o `JwtStrategy` e o produto só aceitam
   `access`) → `POST /auth/login/codigo`. Passo usado fica em `totp_ultimo_passo` (código não se
   reusa); recuperação só com hash (`array_remove` atômico). Clínica exige (`assinaturas.exigir_2fa`,
   padrão falso) de `admin`, `profissional` e acesso `clinico`: sem 2FA, configura no próprio login.
-  5 códigos errados por pessoa em 15 min → 429.
-- **Registros de acesso (L-24, migration 12):** `auditoria.ip`/`user_agent` em login, `login-falha`,
+  5 códigos errados por pessoa em 15 min → 429 (código errado ou repetido = 400; 401 só para o
+  desafio vencido). O admin desliga o 2FA de quem tem acesso **ativo e aceito** na clínica dele
+  (`POST /auth/2fa/desligar/:usuarioId`): a pessoa recebe e-mail e o evento
+  `2fa-desligado-por-admin` entra na trilha de todas as clínicas dela (além do
+  `2fa-desligado-pelo-admin`, com o alvo, na do admin).
+- **Registros de acesso (migration 12):** `auditoria.ip`/`user_agent` em login, `login-falha`,
   `refresh`, `trocar-senha`, `logout` e `2fa-*` (`resource = 'auth'`). Purga no `SessoesCron` pela
-  `RETENCAO_REGISTROS_ACESSO_DIAS` (365, proposta). `GET /auth/acessos` (admin, 90 dias).
-- **Exclusão propagada (L-29, migration 14):** `POST /conta/excluir` grava em
+  `RETENCAO_REGISTROS_ACESSO_DIAS` (365, proposta). `GET /auth/acessos` (admin, 90 dias; `alvoId` =
+  `resource_id`). Eventos da pessoa (redefinir a senha, 2FA desligado por admin) entram em cada
+  clínica em que ela tem acesso ativo e aceito.
+- **Exclusão propagada (migration 14):** `POST /conta/excluir` grava em
   `usuarios.exclusao_pendente` os produtos em que a pessoa tinha acesso e chama
   `POST {produto}/interno/usuarios/:id/anonimizar` (nome/e-mail da cópia local). Falhou (produto
   fora) → fica pendente; `ContaService.cronExclusoes` tenta de novo a cada 10 min (lock global).
+  O produto desativa o vínculo; `PATCH /interno/acessos` recusa reativar conta excluída (409).
