@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
-import { AuditService } from '../audit/audit.service';
+import { AuditService, type ContextoAcesso } from '../audit/audit.service';
 import { Acesso } from '../auth/acesso.entity';
 import {
   AuthService,
@@ -72,6 +72,7 @@ export class SignupService {
 
   async criarConta(
     dto: SignupDto,
+    ctx: ContextoAcesso = {},
   ): Promise<SessaoEmitida & { codigo: string }> {
     exigirProdutoDisponivel(dto.produto);
     const cfg = configProduto(dto.produto) as ConfigProduto;
@@ -127,6 +128,7 @@ export class SignupService {
     await this.provisionarOuDesfazer(cfg, c, dto);
 
     await this.audit.registrar({
+      ...ctx,
       usuarioId: c.usuario.id,
       produto: dto.produto,
       tenantId,
@@ -144,6 +146,7 @@ export class SignupService {
       c.usuario,
       { produto: dto.produto, tenantId, papel: PAPEL_ADMIN },
       'login',
+      ctx,
     );
     return { ...sessao, codigo: c.codigo };
   }
@@ -158,6 +161,7 @@ export class SignupService {
   async criarClinica(
     usuarioId: string,
     dto: NovaClinicaDto,
+    ctx: ContextoAcesso = {},
   ): Promise<SessaoEmitida & { codigo: string }> {
     exigirProdutoDisponivel(dto.produto);
     const cfg = configProduto(dto.produto) as ConfigProduto;
@@ -234,6 +238,7 @@ export class SignupService {
       nome: usuario.nome,
     });
     await this.audit.registrar({
+      ...ctx,
       usuarioId,
       produto: dto.produto,
       tenantId,
@@ -245,6 +250,7 @@ export class SignupService {
       usuario,
       { produto: dto.produto, tenantId, papel: PAPEL_ADMIN },
       'login',
+      ctx,
     );
     return { ...sessao, codigo: c.codigo };
   }

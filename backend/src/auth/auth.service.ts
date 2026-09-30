@@ -395,7 +395,11 @@ export class AuthService {
    * atômico: o UPDATE só casa se o hash ainda for o vigente e não expirou.
    * Fecha os convites pendentes da pessoa e revoga todas as sessões dela.
    */
-  async resetPassword(token: string, novaSenha: string): Promise<void> {
+  async resetPassword(
+    token: string,
+    novaSenha: string,
+    ctx: ContextoAcesso = {},
+  ): Promise<void> {
     const hash = sha256(token);
     const invalido = new UnauthorizedException('Token inválido ou expirado.');
     const usuario = await this.usuarios.findOne({
@@ -423,11 +427,8 @@ export class AuthService {
       { convitePendente: false },
     );
     await this.sessoes.revogarDaPessoa(usuario.id);
-    await this.audit.registrar({
-      usuarioId: usuario.id,
-      action: 'redefinir-senha',
-      resource: 'auth',
-    });
+    // QA-206: com IP e navegador, na trilha de cada clínica da pessoa.
+    await this.audit.registrarDaPessoa(usuario.id, 'redefinir-senha', ctx);
   }
 
   /**
@@ -520,7 +521,10 @@ export class AuthService {
    * front (`POST`; um leitor de links não aceita sozinho). Consumo atômico. O
    * hash fica gravado depois do aceite para o link reaberto dizer "já aceito".
    */
-  async aceitarConvite(token: string): Promise<{ clinicaNome: string | null }> {
+  async aceitarConvite(
+    token: string,
+    ctx: ContextoAcesso = {},
+  ): Promise<{ clinicaNome: string | null }> {
     const hash = sha256(token);
     const s = await this.situacaoConvite(hash);
     const jaAceito = new ConflictException({
@@ -549,6 +553,7 @@ export class AuthService {
     );
     if (!r.affected) throw jaAceito; // outra requisição aceitou antes
     await this.audit.registrar({
+      ...ctx,
       usuarioId: s.acesso.usuarioId,
       produto: s.acesso.produto,
       tenantId: s.acesso.tenantId,

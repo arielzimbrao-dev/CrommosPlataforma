@@ -6,7 +6,13 @@ import {
   AuditService,
   RETENCAO_REGISTROS_ACESSO_DIAS,
 } from 'src/audit/audit.service';
-import { criarApp, fecharApp, limparBanco, mailFalso } from './support/app';
+import {
+  criarApp,
+  fecharApp,
+  limparBanco,
+  mailFalso,
+  ultimo,
+} from './support/app';
 import {
   cookieRefresh,
   criarAcesso,
@@ -31,6 +37,7 @@ describeDb('Registros de acesso (integração)', () => {
   let ds: DataSource;
   const T1 = randomUUID();
   const T2 = randomUUID();
+  const mail = mailFalso();
   let adminId: string;
   let equipeId: string;
   let foraId: string;
@@ -38,7 +45,7 @@ describeDb('Registros de acesso (integração)', () => {
   jest.setTimeout(60_000);
 
   beforeAll(async () => {
-    ({ app, ds } = await criarApp(mailFalso()));
+    ({ app, ds } = await criarApp(mail));
     await limparBanco(ds);
     await criarAssinatura(ds, { tenantId: T1 });
     await criarAssinatura(ds, { tenantId: T2 });
@@ -172,6 +179,57 @@ describeDb('Registros de acesso (integração)', () => {
       .get('/auth/acessos')
       .set('Authorization', `Bearer ${eq.body.accessToken as string}`)
       .expect(403);
+  });
+
+  it('QA-206: redefinir a senha pelo link grava IP, navegador e a clínica (o admin vê)', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/forgot-password')
+      .send({ email: 'eq@l24.com' })
+      .expect(202);
+    const token = ultimo(mail.sendPasswordReset, 1);
+    await request(app.getHttpServer())
+      .post('/auth/reset-password')
+      .set('User-Agent', UA)
+      .send({ token, password: SENHA })
+      .expect(204);
+    const l = (await registros(equipeId)).find(
+      (x) => x.action === 'redefinir-senha',
+    );
+    expect(l).toMatchObject({ user_agent: UA, tenant_id: T1 });
+    expect(l?.ip).toMatch(/127\.0\.0\.1|::1/);
+
+    const adm = await entrar('adm@l24.com').expect(200);
+    const r = await request(app.getHttpServer())
+      .get(`/auth/acessos?usuarioId=${equipeId}`)
+      .set('Authorization', `Bearer ${adm.body.accessToken as string}`)
+      .expect(200);
+    expect(r.body.data[0]).toMatchObject({ acao: 'redefinir-senha' });
+  });
+
+  it('QA-211: a lista diz de quem o admin desligou o 2FA (alvoId)', async () => {
+    await ds.query(
+      `INSERT INTO crommos.auditoria (usuario_id, produto, tenant_id, action, resource, resource_id)
+       VALUES ($1, 'clinic', $2, '2fa-desligado-pelo-admin', 'auth', $3)`,
+      [adminId, T1, equipeId],
+    );
+    const adm = await entrar('adm@l24.com').expect(200);
+    const r = await request(app.getHttpServer())
+      .get(`/auth/acessos?usuarioId=${adminId}&limit=1`)
+      .set('Authorization', `Bearer ${adm.body.accessToken as string}`)
+      .expect(200);
+    expect(r.body.data[0]).toMatchObject({
+      acao: 'login',
+      alvoId: null,
+    });
+    const r2 = await request(app.getHttpServer())
+      .get(`/auth/acessos?usuarioId=${adminId}`)
+      .set('Authorization', `Bearer ${adm.body.accessToken as string}`)
+      .expect(200);
+    expect(
+      (r2.body.data as { acao: string; alvoId: string | null }[]).find(
+        (d) => d.acao === '2fa-desligado-pelo-admin',
+      )?.alvoId,
+    ).toBe(equipeId);
   });
 
   it(`purga: apaga os registros de acesso com mais de ${RETENCAO_REGISTROS_ACESSO_DIAS} dias; o resto fica`, async () => {

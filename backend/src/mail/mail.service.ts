@@ -96,6 +96,27 @@ export class MailService {
     ]);
   }
 
+  /**
+   * QA-195: o admin de uma clínica desligou a verificação em duas etapas da
+   * pessoa (vale em todas as clínicas dela). Aviso sem link.
+   */
+  sendAvisoDoisFatoresDesligado(
+    email: string,
+    clinica: string | null,
+  ): Promise<void> {
+    const perfil = `${urlDoFrontend()}/perfil`;
+    return this.enviar(
+      email,
+      'Sua verificação em duas etapas foi desligada — Crommos',
+      perfil,
+      [
+        `O administrador de ${clinica ?? 'uma clínica'} desligou a verificação em duas etapas da sua conta.`,
+        'Isso vale para todas as clínicas em que você trabalha. Ligue de novo em Meu perfil assim que puder.',
+        'Se você não pediu isso, troque a sua senha e avise a clínica.',
+      ],
+    );
+  }
+
   private async enviar(
     email: string,
     assunto: string,

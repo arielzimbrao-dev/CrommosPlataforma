@@ -1,8 +1,12 @@
-import { Body, Controller, Post, Res } from '@nestjs/common';
+import { Body, Controller, Post, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import type { Response } from 'express';
-import { responderSessao, SessaoResponse } from '../auth/auth.controller';
+import type { Request, Response } from 'express';
+import {
+  contextoDe,
+  responderSessao,
+  SessaoResponse,
+} from '../auth/auth.controller';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { IsPublic } from '../auth/decorators/is-public.decorator';
 import type { ITokenPayload } from '../common/interfaces/token-payload.interface';
@@ -20,9 +24,10 @@ export class SignupController {
   @Post()
   async criar(
     @Body() dto: SignupDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<SessaoResponse & { codigo: string }> {
-    const conta = await this.signup.criarConta(dto);
+    const conta = await this.signup.criarConta(dto, contextoDe(req));
     return { ...responderSessao(res, conta), codigo: conta.codigo };
   }
 
@@ -32,9 +37,10 @@ export class SignupController {
   async criarClinica(
     @CurrentUser() u: ITokenPayload,
     @Body() dto: NovaClinicaDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<SessaoResponse & { codigo: string }> {
-    const conta = await this.signup.criarClinica(u.sub, dto);
+    const conta = await this.signup.criarClinica(u.sub, dto, contextoDe(req));
     return { ...responderSessao(res, conta), codigo: conta.codigo };
   }
 }

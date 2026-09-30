@@ -117,6 +117,14 @@ describeDb('Signup (integração)', () => {
       expect.any(String),
     );
 
+    // QA-206: o signup e o 1º login gravam o IP (registros de acesso).
+    const semIp = await contar(
+      `SELECT count(*)::int AS n FROM crommos.auditoria
+        WHERE usuario_id = $1 AND action IN ('signup', 'login') AND ip IS NULL`,
+      [res.body.pessoa.id],
+    );
+    expect(semIp).toBe(0);
+
     // O código gerado já vale no login.
     await request(app.getHttpServer())
       .post('/auth/login')
@@ -223,6 +231,14 @@ describeDb('Signup (integração)', () => {
         [[r1.body.acesso.tenantId, r2.body.acesso.tenantId]],
       );
       expect(clientes).toHaveLength(1);
+      // QA-206: 'nova-clinica' e o login na clínica nova com IP.
+      const semIp = await ds.query<{ action: string; ip: string | null }[]>(
+        `SELECT action, ip FROM crommos.auditoria
+          WHERE usuario_id = $1 AND tenant_id = $2 ORDER BY created_at`,
+        [r1.body.pessoa.id, r2.body.acesso.tenantId],
+      );
+      expect(semIp.map((l) => l.action)).toEqual(['nova-clinica', 'login']);
+      expect(semIp.every((l) => l.ip)).toBe(true);
       const login = await request(app.getHttpServer())
         .post('/auth/login')
         .send({ email: base.email, password: base.senha, produto: 'clinic' })
