@@ -20,6 +20,7 @@ import { cifrar, decifrar } from '../common/crypto/cifra';
 import { sha256 } from '../common/crypto/segredo';
 import type { ITokenPayload } from '../common/interfaces/token-payload.interface';
 import type { Produto } from '../common/produtos';
+import { MailService } from '../mail/mail.service';
 import { TentativasService } from './tentativas.service';
 import { conferirSenha } from './tokens';
 import {
@@ -94,6 +95,7 @@ export class DoisFatoresService {
     private readonly jwt: JwtService,
     private readonly tentativas: TentativasService,
     private readonly audit: AuditService,
+    private readonly mail: MailService,
   ) {}
 
   // ---- login ---------------------------------------------------------------
@@ -239,7 +241,7 @@ export class DoisFatoresService {
       `SELECT u.id FROM crommos.acessos a
          JOIN crommos.usuarios u ON u.id = a.usuario_id
         WHERE a.produto = $1 AND a.tenant_id = $2 AND a.ativo
-          AND u.totp_ativo_em IS NOT NULL
+          AND NOT a.convite_pendente AND u.totp_ativo_em IS NOT NULL
         ORDER BY u.id`,
       [user.produto, user.tenantId],
     );
@@ -268,19 +270,42 @@ export class DoisFatoresService {
     return { exigir };
   }
 
-  /** Quem perdeu o celular: o admin desliga (a pessoa configura de novo). */
+  /**
+   * Quem perdeu o celular: o admin desliga (a pessoa configura de novo). O
+   * 2FA é da pessoa e vale em todas as clínicas dela (QA-195): só o admin de
+   * uma clínica em que ela trabalha (acesso ativo e **aceito** — convite
+   * pendente não conta); a pessoa recebe e-mail e o evento entra na trilha
+   * dela em todas as clínicas.
+   */
   async desligarDe(
     admin: ITokenPayload,
     usuarioId: string,
     ctx: ContextoAcesso,
   ): Promise<void> {
-    const [a] = await this.ds.query<unknown[]>(
-      `SELECT 1 FROM crommos.acessos
-        WHERE usuario_id = $1 AND produto = $2 AND tenant_id = $3`,
+    const [a] = await this.ds.query<
+      { email: string; clinica: string | null }[]
+    >(
+      `SELECT u.email, s.tenant_nome AS clinica
+         FROM crommos.acessos a
+         JOIN crommos.usuarios u ON u.id = a.usuario_id
+         LEFT JOIN crommos.assinaturas s
+           ON s.tenant_id = a.tenant_id AND s.produto = a.produto
+          AND s.deleted_at IS NULL
+        WHERE a.usuario_id = $1 AND a.produto = $2 AND a.tenant_id = $3
+          AND a.ativo AND NOT a.convite_pendente`,
       [usuarioId, admin.produto, admin.tenantId],
     );
     if (!a) throw new NotFoundException('Usuário não encontrado.');
     await this.limpar(usuarioId);
+    await this.audit.registrarDaPessoa(
+      usuarioId,
+      '2fa-desligado-por-admin',
+      ctx,
+    );
+    // Aviso de segurança: falha no envio não desfaz (o admin já decidiu).
+    await this.mail
+      .sendAvisoDoisFatoresDesligado(a.email, a.clinica)
+      .catch(() => undefined);
     await this.audit.registrar({
       ...ctx,
       usuarioId: admin.sub,

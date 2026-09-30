@@ -34,6 +34,8 @@ export interface RegistroAcesso {
   acao: string;
   ip: string | null;
   navegador: string | null;
+  /** Pessoa afetada (ex.: de quem o admin desligou o 2FA — QA-211). */
+  alvoId: string | null;
 }
 
 /**
@@ -85,7 +87,7 @@ export class AuditService {
     const [data, [{ total }]] = await Promise.all([
       this.logs.query<RegistroAcesso[]>(
         `SELECT a.created_at AS em, a.usuario_id AS "usuarioId", a.action AS acao,
-                a.ip, a.user_agent AS navegador
+                a.ip, a.user_agent AS navegador, a.resource_id AS "alvoId"
            FROM crommos.auditoria a WHERE ${onde}
           ORDER BY a.created_at DESC LIMIT $6 OFFSET $7`,
         [...params, q.take, q.skip],
@@ -96,6 +98,35 @@ export class AuditService {
       ),
     ]);
     return { data, total };
+  }
+
+  /**
+   * Evento da **pessoa** (senha, 2FA — valem em todos os produtos) gravado
+   * na trilha dela em cada clínica em que trabalha (acesso ativo e aceito),
+   * para o admin de cada uma ver. Sem acesso: uma linha sem clínica.
+   */
+  async registrarDaPessoa(
+    usuarioId: string,
+    action: string,
+    ctx: ContextoAcesso,
+  ): Promise<void> {
+    const clinicas = await this.logs.query<
+      { produto: string; tenantId: string }[]
+    >(
+      `SELECT produto, tenant_id AS "tenantId" FROM crommos.acessos
+        WHERE usuario_id = $1 AND ativo AND NOT convite_pendente`,
+      [usuarioId],
+    );
+    const onde = clinicas.length ? clinicas : [{}];
+    for (const c of onde) {
+      await this.registrar({
+        ...ctx,
+        ...c,
+        usuarioId,
+        action,
+        resource: RECURSO_ACESSO,
+      });
+    }
   }
 
   /** Apaga os registros de acesso além da retenção; devolve quantos. */

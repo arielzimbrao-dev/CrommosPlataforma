@@ -28,15 +28,18 @@ describeDb('Verificação em duas etapas (integração)', () => {
   let ds: DataSource;
   const T1 = randomUUID();
   const T2 = randomUUID();
+  const T3 = randomUUID(); // QA-195: clínica nova (trial) de quem ataca
+  const mail = mailFalso();
   const ids: Record<string, string> = {};
 
   jest.setTimeout(60_000);
 
   beforeAll(async () => {
-    ({ app, ds } = await criarApp(mailFalso()));
+    ({ app, ds } = await criarApp(mail));
     await limparBanco(ds);
-    await criarAssinatura(ds, { tenantId: T1 });
-    await criarAssinatura(ds, { tenantId: T2 });
+    await criarAssinatura(ds, { tenantId: T1, tenantNome: 'Clínica Um' });
+    await criarAssinatura(ds, { tenantId: T2, tenantNome: 'Clínica Dois' });
+    await criarAssinatura(ds, { tenantId: T3, tenantNome: 'Clínica Nova' });
     const pessoas: [string, string, string][] = [
       ['ana', T1, 'recepcao'],
       ['adm', T1, 'admin'],
@@ -44,6 +47,7 @@ describeDb('Verificação em duas etapas (integração)', () => {
       ['rec', T1, 'recepcao'],
       ['lim', T1, 'recepcao'],
       ['out', T2, 'profissional'],
+      ['atk', T3, 'admin'],
     ];
     for (const [nome, tenantId, papel] of pessoas) {
       const p = await criarPessoa(ds, { email: `${nome}@2fa.com`, nome });
@@ -269,6 +273,12 @@ describeDb('Verificação em duas etapas (integração)', () => {
       .post(`/auth/2fa/desligar/${ids.pro}`)
       .set('Authorization', await entrar('rec'))
       .expect(403);
+    // O profissional também trabalha (acesso aceito) na Clínica Dois.
+    await criarAcesso(ds, {
+      usuarioId: ids.pro,
+      tenantId: T2,
+      papel: 'profissional',
+    });
     await http()
       .post(`/auth/2fa/desligar/${ids.pro}`)
       .set('Authorization', auth)
@@ -284,10 +294,66 @@ describeDb('Verificação em duas etapas (integração)', () => {
       [ids.pro],
     );
     expect(a.usuario_id).toBe(ids.adm);
+    // QA-195: a pessoa é avisada por e-mail e o evento entra na trilha dela
+    // em todas as clínicas em que trabalha (a do admin e a Clínica Dois).
+    expect(mail.sendAvisoDoisFatoresDesligado).toHaveBeenCalledWith(
+      'pro@2fa.com',
+      'Clínica Um',
+    );
+    const trilha = await ds.query<{ tenant_id: string; ip: string | null }[]>(
+      `SELECT tenant_id, ip FROM crommos.auditoria
+        WHERE action = '2fa-desligado-por-admin' AND usuario_id = $1`,
+      [ids.pro],
+    );
+    expect(trilha.map((t) => t.tenant_id).sort()).toEqual([T1, T2].sort());
+    await ds.query(
+      'UPDATE crommos.acessos SET ativo = false WHERE usuario_id = $1 AND tenant_id = $2',
+      [ids.pro, T2],
+    );
     // Exigido e sem 2FA: configura de novo no próximo login.
     expect(
       (await login('pro').expect(200)).body.doisFatores.configurar,
     ).toBeDefined();
+  });
+
+  it('QA-195: admin de outra clínica que só convidou (ou desativou) a pessoa não desliga o 2FA dela nem vê o selo', async () => {
+    const d = (await login('pro').expect(200)).body.doisFatores
+      .desafio as string;
+    await codigo(d, await proximoCodigo('pro')).expect(200); // liga de novo
+    // A clínica nova (trial) convida o e-mail do profissional: convite pendente.
+    await criarAcesso(ds, {
+      usuarioId: ids.pro,
+      tenantId: T3,
+      papel: 'recepcao',
+      convitePendente: true,
+    });
+    mail.sendAvisoDoisFatoresDesligado.mockClear();
+    const atk = await entrar('atk');
+    await http()
+      .post(`/auth/2fa/desligar/${ids.pro}`)
+      .set('Authorization', atk)
+      .expect(404);
+    const clin = await http()
+      .get('/auth/2fa/clinica')
+      .set('Authorization', atk)
+      .expect(200);
+    expect(clin.body.comDoisFatores).not.toContain(ids.pro);
+    // Aceito, mas desativado: também não.
+    await ds.query(
+      `UPDATE crommos.acessos SET convite_pendente = false, ativo = false
+        WHERE usuario_id = $1 AND tenant_id = $2`,
+      [ids.pro, T3],
+    );
+    await http()
+      .post(`/auth/2fa/desligar/${ids.pro}`)
+      .set('Authorization', atk)
+      .expect(404);
+    const [u] = await ds.query<{ ativo: boolean }[]>(
+      `SELECT totp_ativo_em IS NOT NULL AS ativo FROM crommos.usuarios WHERE id = $1`,
+      [ids.pro],
+    );
+    expect(u.ativo).toBe(true);
+    expect(mail.sendAvisoDoisFatoresDesligado).not.toHaveBeenCalled();
   });
 
   it('sem DATA_ENCRYPTION_KEY: ligar responde 503 (nada em claro)', async () => {

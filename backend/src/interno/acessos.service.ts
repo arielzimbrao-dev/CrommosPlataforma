@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { Acesso } from '../auth/acesso.entity';
 import { SessoesService } from '../auth/sessoes.service';
@@ -227,6 +227,18 @@ export class AcessosService {
     const acesso = await this.exigir(produto, dto.tenantId, dto.usuarioId);
     const desativando = dto.ativo === false && acesso.ativo;
     const reativando = dto.ativo === true && !acesso.ativo;
+    // QA-197: quem excluiu a conta não volta (nem ocupa assento).
+    if (
+      reativando &&
+      (await this.usuarios.exists({
+        where: { id: dto.usuarioId, deletedAt: Not(IsNull()) },
+        withDeleted: true,
+      }))
+    ) {
+      throw new ConflictException(
+        'Esta pessoa excluiu a conta e não pode ser reativada.',
+      );
+    }
     // Papel, ativo e vínculo clínico mudam os assentos: pró-rata.
     const salvo = await this.assinatura.comReprecificacao(
       produto,

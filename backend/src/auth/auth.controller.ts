@@ -173,8 +173,11 @@ export class AuthController {
   @IsPublic()
   @Post('reset-password')
   @HttpCode(HttpStatus.NO_CONTENT)
-  resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
-    return this.auth.resetPassword(dto.token, dto.password);
+  resetPassword(
+    @Body() dto: ResetPasswordDto,
+    @Req() req: Request,
+  ): Promise<void> {
+    return this.auth.resetPassword(dto.token, dto.password, contextoDe(req));
   }
 
   /** Troca da própria senha; a sessão atual segue com um refresh novo. */
@@ -231,8 +234,9 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   aceitarConvite(
     @Body() dto: AceitarConviteDto,
+    @Req() req: Request,
   ): Promise<{ clinicaNome: string | null }> {
-    return this.auth.aceitarConvite(dto.token);
+    return this.auth.aceitarConvite(dto.token, contextoDe(req));
   }
 
   /** A página do link do e-mail valida o token ao abrir (sem consumi-lo). */

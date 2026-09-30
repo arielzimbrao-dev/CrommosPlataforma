@@ -12,6 +12,7 @@ export function mailFalso() {
     sendConvite: jest.fn().mockResolvedValue(undefined),
     sendConviteAceite: jest.fn().mockResolvedValue(undefined),
     sendConfirmacaoEmail: jest.fn().mockResolvedValue(undefined),
+    sendAvisoDoisFatoresDesligado: jest.fn().mockResolvedValue(undefined),
   };
 }
 export type MailFalso = ReturnType<typeof mailFalso>;

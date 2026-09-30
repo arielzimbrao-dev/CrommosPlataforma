@@ -288,6 +288,27 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(400);
   });
 
+  it('QA-197: "Conta excluída" não volta a ativar (nem cobra assento); desativar segue', async () => {
+    const p = await criarPessoa(ds, { email: 'excluida@exemplo.com' });
+    await criarAcesso(ds, { usuarioId: p.id, tenantId: T1, papel: 'gestor' });
+    await ds.query(
+      `UPDATE crommos.usuarios SET deleted_at = now() WHERE id = $1`,
+      [p.id],
+    );
+    await interno('patch', '/acessos')
+      .send({ tenantId: T1, usuarioId: p.id, ativo: false })
+      .expect(200);
+    const r = await interno('patch', '/acessos')
+      .send({ tenantId: T1, usuarioId: p.id, ativo: true })
+      .expect(409);
+    expect(r.body.message).toContain('excluiu a conta');
+    const [a] = await ds.query<{ ativo: boolean }[]>(
+      `SELECT ativo FROM crommos.acessos WHERE usuario_id = $1`,
+      [p.id],
+    );
+    expect(a.ativo).toBe(false);
+  });
+
   it('QA-004: aceite — link reenviado substitui o anterior; convite cancelado (desativado) ou expirado não aceita; reset de senha não aceita', async () => {
     const p = await criarPessoa(ds, { email: 'aceite@exemplo.com' });
     await criarAcesso(ds, { usuarioId: p.id, tenantId: T2 });
