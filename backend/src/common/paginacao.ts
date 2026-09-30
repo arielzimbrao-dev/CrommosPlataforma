@@ -3,11 +3,6 @@ import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export const LIMITE_PADRAO = 50;
 export const LIMITE_MAXIMO = 200;
-/**
- * Teto de segurança para listas que ainda não são paginadas (B13): limita a
- * memória/resposta sem mudar o contrato. Troque por `paginar()` ao paginar.
- */
-export const TETO_LISTA = 500;
 
 /** Query de paginação (`?limit=&offset=`); estenda nos `ListXDto`. */
 export class PaginacaoDto {
