@@ -6,11 +6,7 @@ import {
   Column,
 } from 'typeorm';
 
-/**
- * Classe base das entidades do schema `crommos`.
- * Fornece id (uuid), timestamps de auditoria e soft-delete.
- * Estenda esta classe em cada entidade de domínio.
- */
+/** Base das entidades do schema `crommos`: id, timestamps e soft-delete. */
 export abstract class BaseEntity {
   // `!` (definite assignment): o TypeORM popula estas colunas em runtime, então
   // sob `strictPropertyInitialization` afirmamos que serão atribuídas.

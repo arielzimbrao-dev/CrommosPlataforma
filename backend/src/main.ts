@@ -33,9 +33,8 @@ async function bootstrap(): Promise<void> {
   // Request-id antes de tudo (logs e chamadas aos produtos).
   app.use(requestIdMiddleware);
 
-  // Atrás do proxy (Coolify/Traefik): confia em 1 hop para que `req.ip`
-  // reflita o IP real do cliente — sem isto, o rate limiting por IP trataria
-  // todo o tráfego como um único cliente (o proxy).
+  // Atrás do proxy (Coolify/Traefik): sem confiar em 1 hop, `req.ip` seria o
+  // do proxy e o rate limit por IP trataria todo o tráfego como um cliente só.
   if (
     process.env.NODE_ENV === 'production' ||
     process.env.TRUST_PROXY === 'true'
@@ -43,8 +42,8 @@ async function bootstrap(): Promise<void> {
     app.set('trust proxy', 1);
   }
 
-  // Cabeçalhos de segurança (defesa em profundidade). CSP/CORP desabilitados:
-  // o serviço expõe Swagger UI; um CSP estrito quebraria a UI sem ganho para uma API.
+  // CSP/CORP desligados: um CSP estrito quebraria o Swagger UI sem ganho para
+  // uma API.
   app.use(
     helmet({
       contentSecurityPolicy: false,
@@ -52,20 +51,17 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
-  // Compressão gzip/deflate das respostas. Otimização pura de transporte.
   if (process.env.DISABLE_HTTP_COMPRESSION !== 'true') {
     app.use(compression());
   }
 
-  // Lê cookies (req.cookies) — o refresh token trafega em cookie httpOnly.
+  // O refresh token trafega em cookie httpOnly.
   app.use(cookieParser());
 
   // Corpos pequenos (login, signup, assinatura): o limite padrão (100 KB) basta.
   app.useBodyParser('json', { limit: '100kb' });
 
-  // CORS: origens dos frontends dos produtos (FRONTEND_URLS, CSV; sem ela vale
-  // FRONTEND_URL), com credenciais (cookie de refresh). Em desenvolvimento
-  // libera tudo; em produção nunca abre com a lista vazia (common/http/cors.ts).
+  // Origens dos frontends dos produtos, com credenciais (cookie de refresh).
   const permitidas = origensPermitidas(
     process.env.FRONTEND_URLS ?? process.env.FRONTEND_URL,
   );
@@ -88,9 +84,6 @@ async function bootstrap(): Promise<void> {
     maxAge: 86400,
   });
 
-  // Validação global: rejeita propriedades não declaradas (whitelist +
-  // forbidNonWhitelisted → 400 em campo inesperado) e aplica a transformação de
-  // tipos dos DTOs (transform).
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -98,11 +91,8 @@ async function bootstrap(): Promise<void> {
       transform: true,
     }),
   );
-  // O AllExceptionsFilter global é registrado via APP_FILTER em app.module.ts.
-
-  // Swagger: aberto em desenvolvimento; em produção só com ENABLE_SWAGGER=true E
-  // credenciais Basic (SWAGGER_USER/SWAGGER_PASSWORD) — nunca expõe o schema
-  // publicamente. Sem as credenciais em produção, mantém desligado.
+  // Swagger: aberto em desenvolvimento; em produção só com ENABLE_SWAGGER=true
+  // e Basic Auth (SWAGGER_USER/SWAGGER_PASSWORD).
   const isProduction = process.env.NODE_ENV === 'production';
   const swaggerEnabled = !isProduction || process.env.ENABLE_SWAGGER === 'true';
   const swaggerUser = process.env.SWAGGER_USER;

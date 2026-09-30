@@ -152,7 +152,7 @@ export class SignupService {
   }
 
   /**
-   * R2 — pessoa já logada cria **outra clínica** (tenant novo, trial próprio)
+   * Pessoa já logada cria **outra clínica** (tenant novo, trial próprio)
    * na mesma conta. O cliente pagador é o do CPF/CNPJ informado: se já
    * existe, só vale para quem é admin de uma clínica dele (senão 409); um
    * cliente pode ter várias clínicas do mesmo produto. Exige e-mail

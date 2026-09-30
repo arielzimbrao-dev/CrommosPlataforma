@@ -1,11 +1,11 @@
 /**
- * QA-007: o front mostra a mensagem de qualquer 400 como veio. As mensagens
- * padrão do class-validator (e dos pipes do Nest) são em inglês; aqui elas
- * viram pt-BR num lugar só (o `AllExceptionsFilter`), sem tocar em cada DTO.
- * Mensagem que não casa (já em português, própria do DTO) fica como está.
+ * O front mostra a mensagem de qualquer 400 como veio. As mensagens padrão do
+ * class-validator (e dos pipes do Nest) são em inglês; aqui elas viram pt-BR
+ * num lugar só (o `AllExceptionsFilter`), sem tocar em cada DTO. Mensagem que
+ * não casa (já em português, própria do DTO) fica como está.
  *
- * ponytail: casa pelo texto padrão do class-validator 0.14; se ele mudar o
- * texto, a mensagem só volta a sair em inglês (o teste aponta).
+ * Casa pelo texto padrão do class-validator 0.14; se ele mudar o texto, a
+ * mensagem volta a sair em inglês (o teste aponta).
  */
 const REGRAS: [RegExp, string][] = [
   [/^(.+) must be an email$/, '$1 deve ser um e-mail válido.'],
@@ -62,7 +62,7 @@ const REGRAS: [RegExp, string][] = [
 ];
 
 export function traduzirMensagem(original: string): string {
-  // QA-180: campo aninhado prefixa o caminho ("adicionar.") até a mensagem
+  // Campo aninhado prefixa o caminho ("adicionar.") até a mensagem
   // própria do DTO (maiúscula); a padrão (minúscula) mantém o campo.
   const msg = original.replace(/^(?:\w+\.)+(?=\p{Lu})/u, '');
   // `each: true` prefixa "each value in <campo>".

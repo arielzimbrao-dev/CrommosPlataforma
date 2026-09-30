@@ -72,7 +72,7 @@ export class EnvironmentVariables {
   @IsIn(BOOL_VALUES)
   DB_RUN_SQL_MIGRATIONS?: string;
 
-  /** B4: schemas de produto a esperar antes das migrations (CSV; `nenhum`). */
+  /** Schemas de produto a esperar antes das migrations (CSV; `nenhum`). */
   @IsOptional()
   @IsString()
   @IsNotEmpty()
@@ -207,7 +207,7 @@ export class EnvironmentVariables {
   ABACATEPAY_HMAC_KEY?: string;
 
   /**
-   * Cifra do segredo do 2FA (L-07). Sem ela, ligar o 2FA responde 503 (nada
+   * Cifra do segredo do 2FA. Sem ela, ligar o 2FA responde 503 (nada
    * vai em claro); o login de quem não usa 2FA segue normal.
    */
   @IsOptional()

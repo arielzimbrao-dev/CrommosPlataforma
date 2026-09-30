@@ -2,8 +2,8 @@ import { onlyDigits } from './cpf';
 
 /**
  * Valida um CNPJ (14 dígitos) pelos dígitos verificadores. Aceita com ou sem
- * máscara; rejeita sequências repetidas. ponytail: só CNPJ numérico — o CNPJ
- * alfanumérico da Receita (2026) entra quando precisar.
+ * máscara; rejeita sequências repetidas. Ainda não aceita o CNPJ alfanumérico
+ * da Receita (2026).
  */
 export function isValidCnpj(value: string): boolean {
   const cnpj = onlyDigits(value);

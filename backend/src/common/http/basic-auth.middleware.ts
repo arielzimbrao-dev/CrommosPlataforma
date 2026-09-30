@@ -3,10 +3,8 @@ import { NextFunction, Request, Response } from 'express';
 /**
  * Basic Auth mínimo para proteger uma rota administrativa (ex.: Swagger UI em
  * produção). Não é o mecanismo de auth da API — é só um portão para não expor o
- * schema publicamente. Credenciais vêm de env.
- *
- * ponytail: comparação de string direta basta para um portão de docs; não vale
- * timing-safe aqui (não protege segredo de usuário).
+ * schema publicamente. Credenciais vêm de env; comparação direta (não protege
+ * segredo de usuário).
  */
 export function basicAuth(
   expectedUser: string,

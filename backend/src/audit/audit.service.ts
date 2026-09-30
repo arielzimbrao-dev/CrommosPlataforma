@@ -3,7 +3,7 @@ import { Repository } from 'typeorm';
 import { Auditoria } from './auditoria.entity';
 
 /**
- * Retenção **proposta** dos registros de acesso (revisão LGPD L-24): o Marco
+ * Retenção **proposta** dos registros de acesso (LGPD): o Marco
  * Civil (art. 15) exige ao menos 6 meses; 1 ano dá folga para investigar um
  * incidente. Único lugar do prazo (purga diária no SessoesCron).
  */
@@ -34,7 +34,7 @@ export interface RegistroAcesso {
   acao: string;
   ip: string | null;
   navegador: string | null;
-  /** Pessoa afetada (ex.: de quem o admin desligou o 2FA — QA-211). */
+  /** Pessoa afetada (ex.: de quem o admin desligou o 2FA). */
   alvoId: string | null;
 }
 

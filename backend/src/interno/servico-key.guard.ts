@@ -38,7 +38,7 @@ export class ServicoKeyGuard implements CanActivate {
   }
 }
 
-/** Produto autenticado pelo ServicoKeyGuard — exportada para teste direto. */
+/** Produto autenticado pelo ServicoKeyGuard. */
 export const produtoServicoFactory = (
   _data: unknown,
   ctx: ExecutionContext,

@@ -31,7 +31,7 @@ export class SignupController {
     return { ...responderSessao(res, conta), codigo: conta.codigo };
   }
 
-  /** R2: quem já está logado cria outra clínica e já entra nela (10/h). */
+  /** Quem já está logado cria outra clínica e já entra nela (10/h). */
   @Throttle({ default: { ttl: 3_600_000, limit: 10 } })
   @Post('clinica')
   async criarClinica(

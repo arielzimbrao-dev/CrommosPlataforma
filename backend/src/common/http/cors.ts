@@ -6,7 +6,7 @@ export function origensPermitidas(frontendUrl: string | undefined): string[] {
 }
 
 /**
- * Decide se a origem pode chamar a API com credenciais (BE-A4).
+ * Decide se a origem pode chamar a API com credenciais.
  * - desenvolvimento: libera tudo;
  * - sem `Origin` (curl, healthcheck, server-to-server): libera;
  * - allowlist preenchida: só ela;

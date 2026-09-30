@@ -61,7 +61,7 @@ export class SignupDto {
   termosVersao?: string;
 }
 
-/** R2: outra clínica na conta de quem já está logado (sem dados da pessoa). */
+/** Outra clínica na conta de quem já está logado (sem dados da pessoa). */
 export class NovaClinicaDto {
   @IsIn(PRODUTOS, { message: 'produto deve ser clinic, odonto ou vet.' })
   produto!: Produto;
