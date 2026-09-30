@@ -1,6 +1,6 @@
 /**
- * Catálogo de módulos e a **fórmula de cobrança** (Crommos/docs/03-precificacao.md),
- * portado do Clinic. Fonte da verdade do cálculo — não duplicar preços.
+ * Catálogo de módulos e a **fórmula de cobrança** (Crommos/docs/03-precificacao.md).
+ * Fonte da verdade do cálculo — não duplicar preços.
  *
  * Modelo **assento por módulo**: cada módulo contratado cobra pelas pessoas
  * que têm acesso a ele (derivadas dos acessos ativos e dos papéis — a clínica

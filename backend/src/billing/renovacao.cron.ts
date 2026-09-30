@@ -6,8 +6,8 @@ import { AssinaturaService } from './assinatura.service';
 
 /**
  * Renovação diária dos ciclos vencidos (gera a fatura `ciclo`) e, em seguida,
- * a marcação da inadimplência (modo leitura). Com várias
- * réplicas, só a que obtiver o lock global processa a rodada. O nome do lock
+ * a marcação da inadimplência (modo leitura). Com várias réplicas, só a que
+ * obtiver o lock global roda. O nome do lock
  * é o mesmo do Clinic de propósito: durante a transição, nunca as duas APIs
  * renovam ao mesmo tempo.
  */

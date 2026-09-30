@@ -6,7 +6,7 @@ export type TipoCliente = 'pf' | 'pj';
 /**
  * Cliente = quem paga (schema `crommos`, migration 01). Identificado pelo
  * CPF do dono (`pf`) ou pelo CNPJ da matriz (`pj`), só dígitos. Pode ter
- * várias clínicas (assinaturas) do mesmo produto; as clínicas dele podem ter CNPJs próprios
+ * várias clínicas (assinaturas) do mesmo produto, que podem ter CNPJ próprio
  * (`unidades.cnpj`). Ver docs/contrato.md.
  */
 @Entity({ name: 'clientes', schema: 'crommos' })

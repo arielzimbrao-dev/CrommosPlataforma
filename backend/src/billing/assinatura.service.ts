@@ -125,7 +125,7 @@ export interface FaturaVencida {
   bloqueiaEm: string;
 }
 
-/** Fatura `ciclo` que a confirmação do trial vai gerar (QA-006). */
+/** Fatura `ciclo` que a confirmação do trial vai gerar. */
 export interface PrimeiraFatura {
   valorLiquido: number;
   periodoInicio: string;
@@ -181,9 +181,8 @@ export async function assentosDoTenant(
 
 /**
  * Assinatura do tenant: gating de módulos, mudança com pró-rata, faturas e
- * renovação do ciclo — portado do Clinic (docs/billing-pro-rata.md de lá).
- * Fatura pendente **não bloqueia** o acesso; a baixa é do backoffice
- * (`pagarPelaPlataforma`) até o webhook da AbacatePay.
+ * renovação do ciclo. Fatura pendente não bloqueia o acesso; a baixa vem do
+ * webhook da AbacatePay ou, em contingência, do backoffice.
  */
 @Injectable()
 export class AssinaturaService {
@@ -197,10 +196,8 @@ export class AssinaturaService {
   ) {}
 
   /**
-   * Assinatura em **trial** (signup): todos os módulos, sem limite de pessoas
-   * (a equipe testa junto — QA-009), mensal; o
-   * ciclo do trial vai de hoje a hoje + `dias` e a renovação abre o 1º ciclo
-   * pago. Recebe o `EntityManager` da transação do signup.
+   * Trial do signup: todos os módulos, sem limite de pessoas (a equipe testa
+   * junto), mensal. A renovação no fim do trial abre o 1º ciclo pago.
    */
   static iniciarTrial(
     em: EntityManager,
@@ -256,7 +253,7 @@ export class AssinaturaService {
         await this.faturaVencida(a, hoje),
         await this.teleconsultas(a, assentos),
       );
-    // Sem assinatura: fail-closed (nenhum módulo), como no gating (B5).
+    // Sem assinatura: nenhum módulo (fail-closed), como no gating.
     return {
       ...this.valores([], assentos, PlanoPeriodo.Mensal),
       teleconsultas: null,
@@ -305,7 +302,7 @@ export class AssinaturaService {
         tenantId: a.tenantId,
         assinaturaId: a.id,
         status: 'pendente',
-        // QA-005: vencendo hoje ainda não venceu (só a partir de amanhã).
+        // Vencendo hoje ainda não venceu (só a partir de amanhã).
         vencimento: LessThan(hoje),
       },
       order: { vencimento: 'ASC' },
@@ -387,7 +384,7 @@ export class AssinaturaService {
   }
 
   /**
-   * QA-006: a fatura `ciclo` que a confirmação vai gerar — já (sem assinatura
+   * A fatura `ciclo` que a confirmação vai gerar — já (sem assinatura
    * ou trial vencido: 1º ciclo a partir de hoje, como o `upsert`) ou no fim do
    * trial ativo (renovação). Fora do trial, `null`. Vence no 1º dia do ciclo,
    * como toda fatura de ciclo.
@@ -648,10 +645,7 @@ export class AssinaturaService {
     return r.valor;
   }
 
-  /**
-   * Módulos ativos (gating). Sem assinatura (ausente ou removida) → nenhum:
-   * fail-closed (B5).
-   */
+  /** Módulos ativos (gating). Sem assinatura → nenhum (fail-closed). */
   async getModulosAtivos(
     ator: Pick<Ator, 'produto' | 'tenantId'>,
   ): Promise<ModuleCode[]> {
@@ -748,7 +742,7 @@ export class AssinaturaService {
    * recuperando ciclos atrasados um a um. Devolve quantas faturas gerou.
    */
   async renovarVencidas(hoje = hojeISO()): Promise<number> {
-    // ponytail: varre tudo numa rodada; pagine se o nº de tenants crescer muito.
+    // Varre tudo de uma vez; paginar se o número de tenants crescer muito.
     const vencidas = await this.repo.find({
       where: { cicloFim: LessThanOrEqual(hoje) },
       select: { id: true },
@@ -765,9 +759,8 @@ export class AssinaturaService {
         // Assentos de hoje (os de ciclos atrasados não ficam guardados).
         const assentos =
           a && (await assentosDoTenant(em, a.produto, a.tenantId));
-        // Trial sem confirmação não fatura: a clínica fica em modo leitura.
-        // ponytail: esses tenants voltam na varredura todo dia; filtre no SQL
-        // se forem muitos.
+        // Trial sem confirmação não fatura (a clínica fica em modo leitura) e
+        // volta à varredura todo dia.
         while (
           a &&
           assentos &&
