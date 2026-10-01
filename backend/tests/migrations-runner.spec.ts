@@ -69,10 +69,18 @@ describe('ordenarMigrations', () => {
 });
 
 /** Executor falso: registra SQL e simula erros por trecho de statement. */
-function fakeDb(aplicadas: string[] = [], erros: Record<string, string> = {}) {
+function fakeDb(
+  aplicadas: string[] = [],
+  erros: Record<string, string> = {},
+  schemas: string[] = [],
+) {
   const log: string[] = [];
   const query = jest.fn((sql: string, params?: unknown[]) => {
     log.push(params ? `${sql} ${JSON.stringify(params)}` : sql);
+    if (sql.includes('pg_namespace')) {
+      const nome = (params ?? [])[0] as string;
+      return Promise.resolve(schemas.includes(nome) ? [{ existe: 1 }] : []);
+    }
     if (sql.startsWith('SELECT filename')) {
       return Promise.resolve(aplicadas.map((filename) => ({ filename })));
     }
@@ -211,9 +219,19 @@ describe('controle das migrations', () => {
     const { db, log } = fakeDb();
     await aplicarMigrations(db, [], CONTROLE_PLATAFORMA, silencio);
     expect(log[0]).toBe('SELECT pg_advisory_lock($1) [72460101]');
-    expect(log[1]).toBe('CREATE SCHEMA IF NOT EXISTS crommos');
-    expect(log[2]).toMatch(/^CREATE TABLE IF NOT EXISTS crommos\._migrations/);
-    expect(log[3]).toBe('SELECT filename FROM crommos._migrations');
+    expect(log[1]).toBe(
+      'SELECT 1 FROM pg_namespace WHERE nspname = $1 ["crommos"]',
+    );
+    expect(log[2]).toBe('CREATE SCHEMA IF NOT EXISTS crommos');
+    expect(log[3]).toMatch(/^CREATE TABLE IF NOT EXISTS crommos\._migrations/);
+    expect(log[4]).toBe('SELECT filename FROM crommos._migrations');
+  });
+
+  it('schema já existente: sem CREATE SCHEMA (o usuário da API não tem CREATE no banco)', async () => {
+    const { db, log } = fakeDb([], {}, ['crommos']);
+    await aplicarMigrations(db, [], CONTROLE_PLATAFORMA, silencio);
+    expect(log.some((l) => l.startsWith('CREATE SCHEMA'))).toBe(false);
+    expect(log).toContain('SELECT filename FROM crommos._migrations');
   });
 
   it('outro controle (ex.: o do Clinic, nos testes de compatibilidade) sem schema', async () => {

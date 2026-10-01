@@ -132,7 +132,16 @@ export async function aplicarMigrations(
   const { tabela, schema, lock } = controle;
   await db.query('SELECT pg_advisory_lock($1)', [lock]);
   try {
-    if (schema) await db.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+    // O `IF NOT EXISTS` ainda exige CREATE no banco, que o usuário da API
+    // (plataforma_app, roles-por-schema.sql) não tem: só cria se faltar.
+    if (schema) {
+      const existe = (await db.query(
+        'SELECT 1 FROM pg_namespace WHERE nspname = $1',
+        [schema],
+      )) as unknown[];
+      if (!existe.length)
+        await db.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+    }
     await db.query(`CREATE TABLE IF NOT EXISTS ${tabela} (
       filename   VARCHAR(255) PRIMARY KEY,
       applied_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
