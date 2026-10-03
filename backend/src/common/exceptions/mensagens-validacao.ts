@@ -35,7 +35,11 @@ const REGRAS: [RegExp, string][] = [
   [/^All (.+)'s elements must be unique$/, '$1 não pode ter itens repetidos.'],
   [/^(.+) should not be empty$/, '$1 é obrigatório.'],
   [/^(.+) should not be null or undefined$/, '$1 é obrigatório.'],
-  [/^property (.+) should not exist$/, 'O campo $1 não é permitido.'],
+  // Campo aninhado vem com o caminho ("niveis.property telemedicina …").
+  [
+    /^((?:\w+\.)*)property (.+) should not exist$/,
+    'O campo $1$2 não é permitido.',
+  ],
   [
     /^(.+) must be a valid ISO 8601 date string$/,
     '$1 deve ser uma data válida.',
@@ -56,7 +60,7 @@ const REGRAS: [RegExp, string][] = [
   [/^Validation failed \(uuid is expected\)$/, 'Identificador inválido.'],
   [/^(.+) must be a boolean string$/, '$1 deve ser verdadeiro ou falso.'],
   [
-    /^nested property (.+) must be either object or array$/,
+    /^(?:\w+\.)*nested property (.+) must be either object or array$/,
     '$1 deve ser um objeto ou uma lista.',
   ],
 ];

@@ -99,6 +99,17 @@ describe('traduzirValidacao (400 do ValidationPipe em pt-BR)', () => {
     );
   });
 
+  it('campo aninhado não permitido ou com tipo errado: em português, com o caminho', () => {
+    expect(
+      traduzirMensagem('niveis.property telemedicina should not exist'),
+    ).toBe('O campo niveis.telemedicina não é permitido.');
+    expect(
+      traduzirMensagem(
+        'niveis.nested property niveis must be either object or array',
+      ),
+    ).toBe('niveis deve ser um objeto ou uma lista.');
+  });
+
   it('traduz string e lista; outros tipos passam', () => {
     expect(traduzirValidacao(['email must be an email', 'ok'])).toEqual([
       'email deve ser um e-mail válido.',
