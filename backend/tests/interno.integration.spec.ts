@@ -231,7 +231,7 @@ describeDb('API interna de acessos (integração)', () => {
     // A redução abate as pendentes do ciclo (a mais recente primeiro).
     f = await faturas();
     const total = f.reduce((t, x) => t + Number(x.valor_bruto), 0);
-    expect(total).toBeCloseTo(85, 2);
+    expect(total).toBeCloseTo(89.26, 2); // sobra só o vínculo clínico (49,10 abatidos)
   });
 
   it('tenant sem assinatura (legado) não tem limite; o produto vem da chave', async () => {
