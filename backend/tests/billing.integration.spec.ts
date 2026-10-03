@@ -96,6 +96,7 @@ describeDb('Billing (integração)', () => {
         pessoas: 3,
         preco: 31.24,
         nivel: 'essencial',
+        valorNivel: 0,
         degraus: [{ qtd: 3, preco: 31.24 }],
         subtotal: 93.72,
       });
@@ -193,7 +194,7 @@ describeDb('Billing (integração)', () => {
       .expect(201);
     expect(sim.body).toMatchObject({
       valorAtual: 80.34,
-      valor: 103.1, // 4º assento da Agenda: 22,76
+      valor: 104.44, // 4º assento da Agenda: 24,10
       numeroUsuarios: 5,
     });
     await http()

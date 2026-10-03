@@ -128,12 +128,12 @@ export const DESCONTO_PLANO: Record<PlanoPeriodo, number> = {
  */
 export const ESCADA = [
   { de: 1, ate: 3, fator: 100 },
-  { de: 4, ate: 10, fator: 85 },
-  { de: 11, ate: 30, fator: 75 },
-  { de: 31, ate: null, fator: 65 },
+  { de: 4, ate: 10, fator: 90 },
+  { de: 11, ate: 30, fator: 80 },
+  { de: 31, ate: null, fator: 70 },
 ] as const;
 
-/** Nível do módulo com franquia (Agenda e Fiscal): assento e franquia maiores. */
+/** Nível do módulo com franquia (Agenda e Fiscal): valor fixo e franquia maior, por clínica. */
 export enum Nivel {
   Essencial = 'essencial',
   Profissional = 'profissional',
@@ -156,8 +156,8 @@ export interface Franquia {
   unidade: string;
   /** R$ por unidade além da franquia (cobrado na fatura seguinte). */
   excedente: number;
-  /** Por nível: R$ somados ao preço cheio do assento e unidades/assento/mês. */
-  niveis: Record<Nivel, { acrescimo: number; porAssento: number }>;
+  /** Por nível: R$/mês somados ao módulo e unidades incluídas no mês — por clínica. */
+  niveis: Record<Nivel, { valor: number; incluidos: number }>;
 }
 
 /** Tabela aprovada pelo dono em 03/10/2026 (docs/03-precificacao.md). */
@@ -168,9 +168,9 @@ export const FRANQUIAS: Franquia[] = [
     unidade: 'mensagens de WhatsApp',
     excedente: 0.05,
     niveis: {
-      [Nivel.Essencial]: { acrescimo: 0, porAssento: 150 },
-      [Nivel.Profissional]: { acrescimo: 8, porAssento: 300 },
-      [Nivel.Avancado]: { acrescimo: 18, porAssento: 600 },
+      [Nivel.Essencial]: { valor: 0, incluidos: 150 },
+      [Nivel.Profissional]: { valor: 20, incluidos: 600 },
+      [Nivel.Avancado]: { valor: 45, incluidos: 1200 },
     },
   },
   {
@@ -179,9 +179,9 @@ export const FRANQUIAS: Franquia[] = [
     unidade: 'notas fiscais',
     excedente: 0.15,
     niveis: {
-      [Nivel.Essencial]: { acrescimo: 0, porAssento: 100 },
-      [Nivel.Profissional]: { acrescimo: 10, porAssento: 300 },
-      [Nivel.Avancado]: { acrescimo: 25, porAssento: 800 },
+      [Nivel.Essencial]: { valor: 0, incluidos: 150 },
+      [Nivel.Profissional]: { valor: 50, incluidos: 600 },
+      [Nivel.Avancado]: { valor: 110, incluidos: 1200 },
     },
   },
 ];
@@ -193,6 +193,10 @@ export const franquiaDe = (code: ModuleCode) =>
 export const nivelDe = (code: ModuleCode, niveis: Niveis = {}): Nivel =>
   (franquiaDe(code) && niveis[code]) || Nivel.Essencial;
 
+/** R$/mês do nível do módulo (fixo por clínica; 0 no Essencial e sem franquia). */
+export const valorNivel = (code: ModuleCode, niveis: Niveis = {}): number =>
+  franquiaDe(code)?.niveis[nivelDe(code, niveis)].valor ?? 0;
+
 /** Telemedicina: teleconsultas incluídas por assento, por mês do ciclo. */
 export const FRANQUIA_TELECONSULTAS = 20;
 /** R$ por teleconsulta além da franquia (cobrada na fatura seguinte). */
@@ -200,24 +204,17 @@ export const PRECO_TELECONSULTA_EXCEDENTE = 2;
 
 export const MODULE_CODES = MODULES.map((m) => m.code);
 
-/** Preço cheio do assento no nível (Essencial + acréscimo do nível). */
-const precoCheio = (code: ModuleCode, nivel = Nivel.Essencial) => {
-  const base = MODULES.find((m) => m.code === code)?.precoPorUsuario ?? 0;
-  return base + (franquiaDe(code)?.niveis[nivel].acrescimo ?? 0);
-};
+const precoCheio = (code: ModuleCode) =>
+  MODULES.find((m) => m.code === code)?.precoPorUsuario ?? 0;
 
 /** Centavos de um assento no degrau (arredondado ao centavo, meio para cima). */
-const assentoCent = (code: ModuleCode, fator: number, nivel?: Nivel) =>
-  Math.round((Math.round(precoCheio(code, nivel) * 100) * fator) / 100);
+const assentoCent = (code: ModuleCode, fator: number) =>
+  Math.round((Math.round(precoCheio(code) * 100) * fator) / 100);
 
-/** Preço do k-ésimo assento do módulo (R$): 31,24 × 0,85 = 26,554 → 26,55. */
-export function precoAssento(
-  code: ModuleCode,
-  k: number,
-  nivel?: Nivel,
-): number {
+/** Preço do k-ésimo assento do módulo (R$): 31,24 × 0,90 = 28,116 → 28,12. */
+export function precoAssento(code: ModuleCode, k: number): number {
   const d = ESCADA.find((e) => e.ate === null || k <= e.ate) ?? ESCADA[0];
-  return assentoCent(code, d.fator, nivel) / 100;
+  return assentoCent(code, d.fator) / 100;
 }
 
 export interface Degrau {
@@ -228,28 +225,18 @@ export interface Degrau {
 }
 
 /** `n` assentos do módulo repartidos na escada (sem degraus vazios). */
-export const degrausDe = (
-  code: ModuleCode,
-  n: number,
-  nivel?: Nivel,
-): Degrau[] =>
+export const degrausDe = (code: ModuleCode, n: number): Degrau[] =>
   ESCADA.map((e) => ({
     qtd: Math.max(0, Math.min(n, e.ate ?? n) - e.de + 1),
-    preco: assentoCent(code, e.fator, nivel) / 100,
+    preco: assentoCent(code, e.fator) / 100,
   })).filter((d) => d.qtd > 0);
 
-const subtotalCent = (code: ModuleCode, n: number, nivel?: Nivel) =>
-  degrausDe(code, n, nivel).reduce(
-    (s, d) => s + d.qtd * Math.round(d.preco * 100),
-    0,
-  );
+const subtotalCent = (code: ModuleCode, n: number) =>
+  degrausDe(code, n).reduce((s, d) => s + d.qtd * Math.round(d.preco * 100), 0);
 
 /** Σ dos assentos do módulo (R$/mês, antes do desconto do plano). */
-export const subtotalModulo = (
-  code: ModuleCode,
-  n: number,
-  nivel?: Nivel,
-): number => subtotalCent(code, n, nivel) / 100;
+export const subtotalModulo = (code: ModuleCode, n: number): number =>
+  subtotalCent(code, n) / 100;
 
 /**
  * Teleconsultas além da franquia do ciclo: 20 × assentos de Telemedicina ×
@@ -291,10 +278,12 @@ export interface ItemAssinatura {
   code: ModuleCode;
   /** Pessoas com acesso ao módulo (assentos). */
   pessoas: number;
-  /** Preço cheio por assento (1º ao 3º) no nível, R$/mês. */
+  /** Preço cheio por assento (1º ao 3º), R$/mês. */
   preco: number;
   /** Nível do módulo (Essencial nos módulos sem franquia). */
   nivel: Nivel;
+  /** R$/mês do nível, fixo por clínica (fora do `subtotal` dos assentos). */
+  valorNivel: number;
   /** Assentos por degrau: "3 × R$ 25,50 + 2 × R$ 21,68". */
   degraus: Degrau[];
   /** Σ dos assentos (R$/mês, antes do plano). */
@@ -305,20 +294,20 @@ export interface ItemAssinatura {
 export const itensDe = (a: Assentos, niveis: Niveis = {}): ItemAssinatura[] =>
   MODULES.map((m) => {
     const pessoas = a.porModulo[m.code] ?? 0;
-    const nivel = nivelDe(m.code, niveis);
     return {
       code: m.code,
       pessoas,
-      preco: precoCheio(m.code, nivel),
-      nivel,
-      degraus: degrausDe(m.code, pessoas, nivel),
-      subtotal: subtotalModulo(m.code, pessoas, nivel),
+      preco: m.precoPorUsuario,
+      nivel: nivelDe(m.code, niveis),
+      valorNivel: valorNivel(m.code, niveis),
+      degraus: degrausDe(m.code, pessoas),
+      subtotal: subtotalModulo(m.code, pessoas),
     };
   });
 
 /**
  * Valor final da assinatura (R$/mês):
- *   mensal = Σ módulos contratados Σ assentos (preço do nível × fator do degrau)
+ *   mensal = Σ módulos contratados (Σ assentos (preço cheio × fator do degrau) + valor do nível)
  *   final  = mensal × (1 − desconto do plano)
  */
 export function calcularValor(
@@ -329,7 +318,9 @@ export function calcularValor(
 ): number {
   const mensal = modulos.reduce(
     (s, c) =>
-      s + subtotalCent(c, assentos.porModulo[c] ?? 0, nivelDe(c, niveis)),
+      s +
+      subtotalCent(c, assentos.porModulo[c] ?? 0) +
+      Math.round(valorNivel(c, niveis) * 100),
     0,
   );
   return Math.round(mensal * (1 - DESCONTO_PLANO[plano])) / 100;

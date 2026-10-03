@@ -158,16 +158,16 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
   só entra no login depois do aceite ou da senha definida). Falha no envio → `201` com
   `emailEnviado: false` e o acesso gravado (o produto usa "reenviar convite").
 - **Assento por módulo (migration 10, substitui o limite de usuários):** valor = Σ módulos
-  contratados Σ assentos (preço cheio × fator do degrau) × (1 − desconto do plano). **Escada por
+  contratados (Σ assentos (preço cheio × fator do degrau) + valor do nível) × (1 − desconto do plano). **Escada por
   módulo** (substitui a faixa pelo total de pessoas e o antigo ajuste de virada de faixa): o k-ésimo assento
-  do módulo paga 100% (1º–3º), 85% (4º–10º), 75% (11º–30º) ou 65% (31º+), cada assento arredondado
+  do módulo paga 100% (1º–3º), 90% (4º–10º), 80% (11º–30º) ou 70% (31º+), cada assento arredondado
   ao centavo — somar uma pessoa nunca reduz o valor. Pessoas = acessos `ativo` (convite pendente
   conta); quem ocupa assento em cada módulo vem do papel (espelha o menu do Clinic) e, nos clínicos
   (Prontuário, Exames, Telemedicina), de `acessos.clinico`. Mudança de acesso → pró-rata na hora.
-  `GET /assinatura` traz `itens: [{ code, pessoas, preco, nivel, degraus: [{ qtd, preco }], subtotal }]`
-  (`preco` = cheio do nível), `niveis` (`{ agenda?, fiscal? }`: `essencial` | `profissional` |
-  `avancado`; ausente = Essencial), `franquias` (tabela de níveis: acréscimo no assento, unidades
-  por assento e preço do excedente), `consumos: [{ tipo, modulo, unidade, nivel, usados,
+  `GET /assinatura` traz `itens: [{ code, pessoas, preco, nivel, valorNivel, degraus: [{ qtd, preco }], subtotal }]`
+  (`preco` = cheio; `valorNivel` = R$/mês fixo do nível, fora do `subtotal` dos assentos), `niveis` (`{ agenda?, fiscal? }`: `essencial` | `profissional` |
+  `avancado`; ausente = Essencial), `franquias` (tabela de níveis: `valor` fixo por clínica/mês,
+  `incluidos` por clínica/mês e preço do excedente), `consumos: [{ tipo, modulo, unidade, nivel, usados,
   incluidos, excedente }]` (Agenda/Fiscal contratados; o excedente entra na fatura da renovação em
   `itens.consumosExcedentes`, com `quantidade`, `valorUnitario` e `valor` — migration 15,
   `crommos.consumos`; o ciclo do trial não cobra; o nível vigente no fim do ciclo vale para o ciclo

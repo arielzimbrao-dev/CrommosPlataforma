@@ -598,7 +598,7 @@ describeDb('API interna de acessos (integração)', () => {
         .send({ tenantId: T_CONS, tipo: 'whatsapp', referencia })
         .expect(204);
     }
-    // + 150 mensagens no ciclo que fecha (franquia Essencial: 150 × 1 assento)
+    // + 150 mensagens no ciclo que fecha (franquia Essencial: 150 por clínica)
     await ds.query(
       `INSERT INTO crommos.consumos (produto, tenant_id, tipo, referencia)
        SELECT 'clinic', $1, 'whatsapp', gen_random_uuid() FROM generate_series(1, 150)`,

@@ -112,7 +112,7 @@ export interface ConsumoFranquia {
   nivel: Nivel;
   /** Mensagens/notas no ciclo corrente. */
   usados: number;
-  /** Franquia do ciclo: porAssento do nível × assentos × meses do ciclo. */
+  /** Franquia do ciclo: incluídos do nível (por clínica/mês) × meses do ciclo. */
   incluidos: number;
   /** R$ por unidade além da franquia. */
   excedente: number;
@@ -301,7 +301,7 @@ export class AssinaturaService {
         hoje,
         await this.faturaVencida(a, hoje),
         await this.teleconsultas(a, assentos),
-        await this.consumos(a, assentos),
+        await this.consumos(a),
       );
     // Sem assinatura: nenhum módulo (fail-closed), como no gating.
     return {
@@ -610,7 +610,7 @@ export class AssinaturaService {
         hoje,
         await this.faturaVencida(r.a, hoje),
         await this.teleconsultas(r.a, assentos),
-        await this.consumos(r.a, assentos),
+        await this.consumos(r.a),
       ),
       ajuste: r.ajuste,
       fatura: r.fatura,
@@ -855,7 +855,7 @@ export class AssinaturaService {
             a.niveis,
           );
           const tele = await this.excedentes(em, a, assentos);
-          const consumo = await this.consumosExcedentes(em, a, assentos);
+          const consumo = await this.consumosExcedentes(em, a);
           const r = renovarCiclo({
             cicloFim: a.cicloFim,
             plano: a.plano,
@@ -937,7 +937,6 @@ export class AssinaturaService {
    */
   private async consumos(
     a: Assinatura,
-    assentos: Assentos,
     q: Pick<EntityManager, 'query'> = this.ds,
   ): Promise<ConsumoFranquia[]> {
     const contratadas = FRANQUIAS.filter((f) =>
@@ -960,10 +959,7 @@ export class AssinaturaService {
         unidade: f.unidade,
         nivel,
         usados: usados[f.tipo] ?? 0,
-        incluidos:
-          f.niveis[nivel].porAssento *
-          (assentos.porModulo[f.modulo] ?? 0) *
-          meses,
+        incluidos: f.niveis[nivel].incluidos * meses,
         excedente: f.excedente,
       };
     });
@@ -973,14 +969,10 @@ export class AssinaturaService {
    * Consumo além da franquia no ciclo que fecha (itens da fatura seguinte).
    * O ciclo do trial não cobra.
    */
-  private async consumosExcedentes(
-    em: EntityManager,
-    a: Assinatura,
-    assentos: Assentos,
-  ) {
+  private async consumosExcedentes(em: EntityManager, a: Assinatura) {
     const trial = !!a.emTrialAte && a.cicloFim <= a.emTrialAte;
     if (trial) return [];
-    return (await this.consumos(a, assentos, em))
+    return (await this.consumos(a, em))
       .map(({ excedente, ...c }) => {
         const quantidade = Math.max(0, c.usados - c.incluidos);
         return {
