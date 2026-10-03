@@ -300,12 +300,23 @@ describeDb('Verificação em duas etapas (integração)', () => {
       'pro@2fa.com',
       'Clínica Um',
     );
-    const trilha = await ds.query<{ tenant_id: string; ip: string | null }[]>(
-      `SELECT tenant_id, ip FROM crommos.auditoria
-        WHERE action = '2fa-desligado-por-admin' AND usuario_id = $1`,
+    const trilha = await ds.query<
+      { tenant_id: string; action: string; ip: string | null }[]
+    >(
+      `SELECT tenant_id, action, ip FROM crommos.auditoria
+        WHERE action LIKE '2fa-desligado-por-%' AND usuario_id = $1
+        ORDER BY tenant_id`,
       [ids.pro],
     );
-    expect(trilha.map((t) => t.tenant_id).sort()).toEqual([T1, T2].sort());
+    // Na clínica do admin, o registro completo; na outra, "por outra clínica",
+    // sem o IP/navegador de quem desligou (não é da equipe dela).
+    expect(trilha.find((t) => t.tenant_id === T1)?.action).toBe(
+      '2fa-desligado-por-admin',
+    );
+    expect(trilha.find((t) => t.tenant_id === T2)).toMatchObject({
+      action: '2fa-desligado-por-outra-clinica',
+      ip: null,
+    });
     await ds.query(
       'UPDATE crommos.acessos SET ativo = false WHERE usuario_id = $1 AND tenant_id = $2',
       [ids.pro, T2],

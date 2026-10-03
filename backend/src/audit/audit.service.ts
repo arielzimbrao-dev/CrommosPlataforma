@@ -109,6 +109,12 @@ export class AuditService {
     usuarioId: string,
     action: string,
     ctx: ContextoAcesso,
+    /**
+     * Ação feita por uma clínica (ex.: admin desligou o 2FA): nas outras
+     * clínicas da pessoa vale `noutra` (ação "por outra clínica"), sem o IP e
+     * o navegador de quem fez — não é da equipe delas.
+     */
+    origem?: { tenantId: string; noutra: string },
   ): Promise<void> {
     const clinicas = await this.logs.query<
       { produto: string; tenantId: string }[]
@@ -119,11 +125,13 @@ export class AuditService {
     );
     const onde = clinicas.length ? clinicas : [{}];
     for (const c of onde) {
+      const fora =
+        !!origem && 'tenantId' in c && c.tenantId !== origem.tenantId;
       await this.registrar({
-        ...ctx,
+        ...(fora ? {} : ctx),
         ...c,
         usuarioId,
-        action,
+        action: fora ? origem.noutra : action,
         resource: RECURSO_ACESSO,
       });
     }

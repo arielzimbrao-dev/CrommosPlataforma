@@ -301,6 +301,7 @@ export class DoisFatoresService {
       usuarioId,
       '2fa-desligado-por-admin',
       ctx,
+      { tenantId: admin.tenantId, noutra: '2fa-desligado-por-outra-clinica' },
     );
     // Aviso de segurança: falha no envio não desfaz (o admin já decidiu).
     await this.mail
