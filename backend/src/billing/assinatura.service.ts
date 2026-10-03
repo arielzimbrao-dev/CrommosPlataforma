@@ -22,17 +22,22 @@ import { Fatura } from './fatura.entity';
 import {
   Assentos,
   ESCADA,
+  FRANQUIAS,
   FRANQUIA_TELECONSULTAS,
   ItemAssinatura,
   MODULES,
   MODULE_CODES,
   ModuleCode,
+  Nivel,
+  Niveis,
   PRECO_TELECONSULTA_EXCEDENTE,
+  TipoConsumo,
   PessoaAcesso,
   PlanoPeriodo,
   calcularValor,
   contarAssentos,
   itensDe,
+  nivelDe,
   teleconsultasExcedentes,
 } from './modules.catalog';
 import {
@@ -73,8 +78,14 @@ export interface AssinaturaView {
   /** Assentos, degraus da escada e subtotal de cada módulo. */
   itens: ItemAssinatura[];
   escada: typeof ESCADA;
+  /** Nível de cada módulo com franquia (ausente = Essencial). */
+  niveis: Niveis;
+  /** Níveis, franquia e excedente de cada módulo com franquia. */
+  franquias: typeof FRANQUIAS;
   /** Telemedicina contratada: teleconsultas do ciclo × franquia; senão null. */
   teleconsultas: Teleconsultas | null;
+  /** Agenda/Fiscal contratados: consumo do ciclo × franquia do nível. */
+  consumos: ConsumoFranquia[];
   ciclo: { inicio: string; fim: string } | null;
   emTrialAte: string | null;
   emTrial: boolean;
@@ -92,6 +103,44 @@ export interface Teleconsultas {
   realizadas: number;
   /** Franquia do ciclo: 20 × assentos de Telemedicina × meses do ciclo. */
   incluidas: number;
+}
+
+export interface ConsumoFranquia {
+  tipo: TipoConsumo;
+  modulo: ModuleCode;
+  unidade: string;
+  nivel: Nivel;
+  /** Mensagens/notas no ciclo corrente. */
+  usados: number;
+  /** Franquia do ciclo: porAssento do nível × assentos × meses do ciclo. */
+  incluidos: number;
+  /** R$ por unidade além da franquia. */
+  excedente: number;
+}
+
+/** Só os níveis informados (campos `undefined` do DTO não apagam os atuais). */
+const mesclarNiveis = (atual: Niveis = {}, novo: Niveis = {}): Niveis => ({
+  ...atual,
+  ...Object.fromEntries(Object.entries(novo).filter(([, v]) => v)),
+});
+
+/** Consumo por tipo no período [de, ate) — datas de Brasília. */
+async function consumosNoPeriodo(
+  q: Pick<EntityManager, 'query'>,
+  produto: Produto,
+  tenantId: string,
+  de: string,
+  ate: string,
+): Promise<Partial<Record<TipoConsumo, number>>> {
+  const linhas = await q.query<{ tipo: TipoConsumo; n: number }[]>(
+    `SELECT tipo, count(*)::int AS n FROM crommos.consumos
+      WHERE produto = $1 AND tenant_id = $2
+        AND (ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date >= $3::date
+        AND (ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date < $4::date
+      GROUP BY tipo`,
+    [produto, tenantId, de, ate],
+  );
+  return Object.fromEntries(linhas.map((l) => [l.tipo, Number(l.n)]));
 }
 
 /** Meses do ciclo para a franquia (o ciclo do trial, de dias, conta 1). */
@@ -252,11 +301,13 @@ export class AssinaturaService {
         hoje,
         await this.faturaVencida(a, hoje),
         await this.teleconsultas(a, assentos),
+        await this.consumos(a, assentos),
       );
     // Sem assinatura: nenhum módulo (fail-closed), como no gating.
     return {
-      ...this.valores([], assentos, PlanoPeriodo.Mensal),
+      ...this.valores([], assentos, PlanoPeriodo.Mensal, {}),
       teleconsultas: null,
+      consumos: [],
       ciclo: null,
       emTrialAte: null,
       emTrial: false,
@@ -352,12 +403,15 @@ export class AssinaturaService {
             dto.remover && pessoa(dto.remover),
           )
         : atuais;
-    const valor = calcularValor(dto.modulos, assentos, dto.plano);
+    const niveis = mesclarNiveis(a?.niveis, dto.niveis);
+    const valor = calcularValor(dto.modulos, assentos, dto.plano, niveis);
     const base = {
       valor,
-      valorAtual: a ? calcularValor(a.modulosAtivos, atuais, a.plano) : 0,
+      valorAtual: a
+        ? calcularValor(a.modulosAtivos, atuais, a.plano, a.niveis)
+        : 0,
       numeroUsuarios: assentos.pessoas,
-      itens: itensDe(assentos),
+      itens: itensDe(assentos, niveis),
     };
     const ajuste = a ? this.proRata(a, atuais, valor, hoje) : null;
     const primeiraFatura = this.primeiraFatura(a, valor, dto.plano, hoje);
@@ -432,8 +486,9 @@ export class AssinaturaService {
       // Merge explícito: campos ausentes chegam como `undefined` no DTO.
       const modulosAtivos = dto.modulosAtivos ?? atual?.modulosAtivos ?? [];
       const plano = dto.plano ?? atual?.plano ?? PlanoPeriodo.Mensal;
+      const niveis = mesclarNiveis(atual?.niveis, dto.niveis);
       const assentos = await assentosDoTenant(em, produto, tenantId);
-      const valorNovo = calcularValor(modulosAtivos, assentos, plano);
+      const valorNovo = calcularValor(modulosAtivos, assentos, plano, niveis);
       const numeroUsuarios = assentos.pessoas;
 
       if (!atual) {
@@ -448,6 +503,7 @@ export class AssinaturaService {
             tenantId,
             produto,
             modulosAtivos,
+            niveis,
             numeroUsuarios,
             plano,
             cicloInicio: ciclo.cicloInicio,
@@ -466,7 +522,13 @@ export class AssinaturaService {
           creditoAplicado: 0,
           valorLiquido: ciclo.valorLiquido,
           vencimento: hoje,
-          itens: { motivo: 'criacao', modulosAtivos, numeroUsuarios, plano },
+          itens: {
+            motivo: 'criacao',
+            modulosAtivos,
+            niveis,
+            numeroUsuarios,
+            plano,
+          },
           createdBy: usuarioId,
         });
         return { a, ajuste: null, fatura, abatidas: [] as Fatura[] };
@@ -481,6 +543,7 @@ export class AssinaturaService {
       }
       const ajuste = this.proRata(atual, assentos, valorNovo, hoje);
       atual.modulosAtivos = modulosAtivos;
+      atual.niveis = niveis;
       atual.numeroUsuarios = numeroUsuarios;
       atual.plano = plano;
       atual.updatedBy = usuarioId;
@@ -504,12 +567,19 @@ export class AssinaturaService {
           creditoAplicado: ciclo.creditoAplicado,
           valorLiquido: ciclo.valorLiquido,
           vencimento: hoje,
-          itens: { motivo: 'fim-trial', modulosAtivos, numeroUsuarios, plano },
+          itens: {
+            motivo: 'fim-trial',
+            modulosAtivos,
+            niveis,
+            numeroUsuarios,
+            plano,
+          },
           createdBy: usuarioId,
         });
       } else {
         const r = await this.aplicarAjuste(em, atual, ajuste, hoje, usuarioId, {
           modulosAtivos,
+          niveis,
           numeroUsuarios,
           plano,
         });
@@ -540,6 +610,7 @@ export class AssinaturaService {
         hoje,
         await this.faturaVencida(r.a, hoje),
         await this.teleconsultas(r.a, assentos),
+        await this.consumos(r.a, assentos),
       ),
       ajuste: r.ajuste,
       fatura: r.fatura,
@@ -614,8 +685,18 @@ export class AssinaturaService {
         cicloFim: a.cicloFim,
         emTrialAte: a.emTrialAte,
         hoje,
-        valorMensalAnterior: calcularValor(a.modulosAtivos, antes, a.plano),
-        valorMensalNovo: calcularValor(a.modulosAtivos, depois, a.plano),
+        valorMensalAnterior: calcularValor(
+          a.modulosAtivos,
+          antes,
+          a.plano,
+          a.niveis,
+        ),
+        valorMensalNovo: calcularValor(
+          a.modulosAtivos,
+          depois,
+          a.plano,
+          a.niveis,
+        ),
       });
       const aj = await this.aplicarAjuste(em, a, ajuste, hoje, undefined, {
         motivo: 'assentos',
@@ -767,14 +848,23 @@ export class AssinaturaService {
           a.cicloFim <= hoje &&
           !trialExpirado(a, a.cicloFim)
         ) {
-          const valorMensal = calcularValor(a.modulosAtivos, assentos, a.plano);
+          const valorMensal = calcularValor(
+            a.modulosAtivos,
+            assentos,
+            a.plano,
+            a.niveis,
+          );
           const tele = await this.excedentes(em, a, assentos);
+          const consumo = await this.consumosExcedentes(em, a, assentos);
           const r = renovarCiclo({
             cicloFim: a.cicloFim,
             plano: a.plano,
             valorMensal,
             saldoCredito: a.saldoCredito,
-            adicional: tele?.valor ?? 0,
+            adicional:
+              (centavos(tele?.valor ?? 0) +
+                consumo.reduce((s, c) => s + centavos(c.valor), 0)) /
+              100,
           });
           await this.gravarFatura(em, a, {
             tipo: 'ciclo',
@@ -792,6 +882,7 @@ export class AssinaturaService {
               plano: a.plano,
               valorMensal,
               ...(tele && { teleconsultasExcedentes: tele }),
+              ...(consumo.length && { consumosExcedentes: consumo }),
             },
           });
           a.cicloInicio = r.cicloInicio;
@@ -821,6 +912,85 @@ export class AssinaturaService {
        VALUES ($1, $2, $3) ON CONFLICT (produto, referencia) DO NOTHING`,
       [produto, tenantId, referencia],
     );
+  }
+
+  /**
+   * Mensagem de WhatsApp enviada ou NFS-e emitida no produto (API interna).
+   * Idempotente pela referência (id no produto).
+   */
+  async registrarConsumo(
+    produto: Produto,
+    tenantId: string,
+    tipo: TipoConsumo,
+    referencia: string,
+  ): Promise<void> {
+    await this.ds.query(
+      `INSERT INTO crommos.consumos (produto, tenant_id, tipo, referencia)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (produto, tipo, referencia) DO NOTHING`,
+      [produto, tenantId, tipo, referencia],
+    );
+  }
+
+  /**
+   * Consumo do ciclo corrente × franquia do nível, por módulo com franquia
+   * contratado. O nível vigente no fim do ciclo vale para o ciclo inteiro.
+   */
+  private async consumos(
+    a: Assinatura,
+    assentos: Assentos,
+    q: Pick<EntityManager, 'query'> = this.ds,
+  ): Promise<ConsumoFranquia[]> {
+    const contratadas = FRANQUIAS.filter((f) =>
+      a.modulosAtivos.includes(f.modulo),
+    );
+    if (!contratadas.length) return [];
+    const usados = await consumosNoPeriodo(
+      q,
+      a.produto,
+      a.tenantId,
+      a.cicloInicio,
+      a.cicloFim,
+    );
+    const meses = mesesDoCiclo(a);
+    return contratadas.map((f) => {
+      const nivel = nivelDe(f.modulo, a.niveis);
+      return {
+        tipo: f.tipo,
+        modulo: f.modulo,
+        unidade: f.unidade,
+        nivel,
+        usados: usados[f.tipo] ?? 0,
+        incluidos:
+          f.niveis[nivel].porAssento *
+          (assentos.porModulo[f.modulo] ?? 0) *
+          meses,
+        excedente: f.excedente,
+      };
+    });
+  }
+
+  /**
+   * Consumo além da franquia no ciclo que fecha (itens da fatura seguinte).
+   * O ciclo do trial não cobra.
+   */
+  private async consumosExcedentes(
+    em: EntityManager,
+    a: Assinatura,
+    assentos: Assentos,
+  ) {
+    const trial = !!a.emTrialAte && a.cicloFim <= a.emTrialAte;
+    if (trial) return [];
+    return (await this.consumos(a, assentos, em))
+      .map(({ excedente, ...c }) => {
+        const quantidade = Math.max(0, c.usados - c.incluidos);
+        return {
+          ...c,
+          quantidade,
+          valorUnitario: excedente,
+          valor: Math.round(quantidade * excedente * 100) / 100,
+        };
+      })
+      .filter((c) => c.quantidade > 0);
   }
 
   /** Franquia do ciclo corrente (só com Telemedicina contratada). */
@@ -889,7 +1059,12 @@ export class AssinaturaService {
       cicloFim: a.cicloFim,
       emTrialAte: a.emTrialAte,
       hoje,
-      valorMensalAnterior: calcularValor(a.modulosAtivos, assentos, a.plano),
+      valorMensalAnterior: calcularValor(
+        a.modulosAtivos,
+        assentos,
+        a.plano,
+        a.niveis,
+      ),
       valorMensalNovo: valorNovo,
     });
   }
@@ -989,14 +1164,17 @@ export class AssinaturaService {
     modulosAtivos: ModuleCode[],
     assentos: Assentos,
     plano: PlanoPeriodo,
+    niveis: Niveis,
   ) {
     return {
       modulosAtivos,
+      niveis,
       numeroUsuarios: assentos.pessoas,
       plano,
-      valor: calcularValor(modulosAtivos, assentos, plano),
+      valor: calcularValor(modulosAtivos, assentos, plano, niveis),
       catalogo: MODULES,
-      itens: itensDe(assentos),
+      franquias: FRANQUIAS,
+      itens: itensDe(assentos, niveis),
       escada: ESCADA,
     };
   }
@@ -1007,10 +1185,12 @@ export class AssinaturaService {
     hoje: string,
     faturaVencida: FaturaVencida | null,
     teleconsultas: Teleconsultas | null,
+    consumos: ConsumoFranquia[],
   ): AssinaturaView {
     return {
-      ...this.valores(a.modulosAtivos, assentos, a.plano),
+      ...this.valores(a.modulosAtivos, assentos, a.plano, a.niveis ?? {}),
       teleconsultas,
+      consumos,
       ciclo: { inicio: a.cicloInicio, fim: a.cicloFim },
       emTrialAte: a.emTrialAte,
       emTrial: emTrial(a.emTrialAte, hoje),

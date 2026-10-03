@@ -11,7 +11,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { ModuleCode, PAPEIS, PlanoPeriodo } from '../modules.catalog';
+import { ModuleCode, Nivel, PAPEIS, PlanoPeriodo } from '../modules.catalog';
 
 const USUARIOS = 'Informe de 1 a 1000 usuários.';
 
@@ -27,6 +27,21 @@ export class PessoaSimuladaDto {
   @IsOptional()
   @IsBoolean()
   clinico?: boolean;
+}
+
+/** Nível dos módulos com franquia; módulo ausente mantém o nível atual. */
+export class NiveisDto {
+  @IsOptional()
+  @IsEnum(Nivel, {
+    message: 'Nível inválido: essencial, profissional ou avancado.',
+  })
+  agenda?: Nivel;
+
+  @IsOptional()
+  @IsEnum(Nivel, {
+    message: 'Nível inválido: essencial, profissional ou avancado.',
+  })
+  fiscal?: Nivel;
 }
 
 /**
@@ -50,6 +65,11 @@ export class UpdateAssinaturaDto {
   @IsOptional()
   @IsEnum(PlanoPeriodo)
   plano?: PlanoPeriodo;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NiveisDto)
+  niveis?: NiveisDto;
 }
 
 export class SimularDto {
@@ -68,6 +88,11 @@ export class SimularDto {
 
   @IsEnum(PlanoPeriodo)
   plano!: PlanoPeriodo;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NiveisDto)
+  niveis?: NiveisDto;
 
   @IsOptional()
   @ValidateNested()

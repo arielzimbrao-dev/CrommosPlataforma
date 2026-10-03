@@ -209,8 +209,8 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(201);
     let f = await faturas();
     expect(f).toHaveLength(1);
-    // Agenda + Múltiplas unidades + Estoque: 25,50 + 12,75 + 8,50 no mês inteiro.
-    expect(Number(f[0].valor_bruto)).toBe(46.75);
+    // Agenda + Múltiplas unidades + Estoque: 26,78 + 13,39 + 8,93 no mês inteiro.
+    expect(Number(f[0].valor_bruto)).toBe(49.1);
     expect(f[0].itens.motivo).toBe('assentos');
 
     // Vínculo com profissional: o dono ocupa Prontuário, Exames e Telemedicina.
@@ -222,7 +222,7 @@ describeDb('API interna de acessos (integração)', () => {
       .expect(200);
     expect(r.body.clinico).toBe(true);
     f = await faturas();
-    expect(Number(f[1].valor_bruto)).toBe(85); // 25,50 + 17 + 42,50
+    expect(Number(f[1].valor_bruto)).toBe(89.26); // 26,78 + 17,85 + 44,63
 
     // Compensação (vínculo não gravado no produto): desfaz a cobrança.
     await interno('delete', '/acessos')
@@ -559,8 +559,8 @@ describeDb('API interna de acessos (integração)', () => {
         WHERE a.tenant_id = $1`,
       [T_TELE],
     );
-    // 1 médico: 42,50 + (23 − 20) × 2,00
-    expect(Number(fatura.valor_bruto)).toBe(48.5);
+    // 1 médico: 44,63 + (23 − 20) × 2,00
+    expect(Number(fatura.valor_bruto)).toBe(50.63);
     expect(fatura.itens.teleconsultasExcedentes).toEqual({
       quantidade: 3,
       valorUnitario: 2,
@@ -574,5 +574,62 @@ describeDb('API interna de acessos (integração)', () => {
       '2026-09-15',
     );
     expect(view.teleconsultas).toEqual({ realizadas: 0, incluidas: 20 });
+  });
+
+  it('POST /consumos: WhatsApp/NFS-e contam na franquia do nível (idempotente); o excedente entra na renovação', async () => {
+    const T_CONS = randomUUID();
+    await criarAssinatura(ds, {
+      tenantId: T_CONS,
+      modulosAtivos: [ModuleCode.Agenda],
+      cicloInicio: '2026-08-01',
+      cicloFim: '2026-09-01',
+    });
+    const pessoa = await criarPessoa(ds, { email: 'consumo@exemplo.com' });
+    await criarAcesso(ds, { usuarioId: pessoa.id, tenantId: T_CONS });
+    const ref = randomUUID();
+    await interno('post', '/consumos', null)
+      .send({ tenantId: T_CONS, tipo: 'whatsapp', referencia: ref })
+      .expect(401);
+    await interno('post', '/consumos')
+      .send({ tenantId: T_CONS, tipo: 'sms', referencia: ref })
+      .expect(400);
+    for (const referencia of [ref, ref, randomUUID()]) {
+      await interno('post', '/consumos')
+        .send({ tenantId: T_CONS, tipo: 'whatsapp', referencia })
+        .expect(204);
+    }
+    // + 150 mensagens no ciclo que fecha (franquia Essencial: 150 × 1 assento)
+    await ds.query(
+      `INSERT INTO crommos.consumos (produto, tenant_id, tipo, referencia)
+       SELECT 'clinic', $1, 'whatsapp', gen_random_uuid() FROM generate_series(1, 150)`,
+      [T_CONS],
+    );
+    await ds.query(
+      `UPDATE crommos.consumos SET ocorrido_em = '2026-08-10T15:00:00Z'
+        WHERE tenant_id = $1`,
+      [T_CONS],
+    );
+
+    const svc = app.get(AssinaturaService);
+    await svc.renovarVencidas('2026-09-15');
+    const [fatura] = await ds.query<
+      { valor_bruto: string; itens: Record<string, unknown> }[]
+    >(
+      `SELECT f.valor_bruto, f.itens FROM crommos.faturas f
+         JOIN crommos.assinaturas a ON a.id = f.assinatura_id
+        WHERE a.tenant_id = $1`,
+      [T_CONS],
+    );
+    // 1 assento de Agenda: 26,78 + (152 − 150) × 0,05
+    expect(Number(fatura.valor_bruto)).toBe(26.88);
+    expect(fatura.itens.consumosExcedentes).toEqual([
+      expect.objectContaining({
+        tipo: 'whatsapp',
+        usados: 152,
+        incluidos: 150,
+        quantidade: 2,
+        valor: 0.1,
+      }),
+    ]);
   });
 });

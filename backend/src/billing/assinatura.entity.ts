@@ -3,6 +3,7 @@ import { BaseEntity } from '../common/base.entity';
 import { numericTransformer } from '../common/numeric.transformer';
 import type { Produto } from '../common/produtos';
 import { ModuleCode, PlanoPeriodo } from './modules.catalog';
+import type { Niveis } from './modules.catalog';
 
 /**
  * Assinatura de um tenant de um produto (`crommos.assinaturas`): módulos, nº de
@@ -33,6 +34,10 @@ export class Assinatura extends BaseEntity {
 
   @Column({ name: 'modulos_ativos', type: 'jsonb', default: () => "'[]'" })
   modulosAtivos!: ModuleCode[];
+
+  /** Nível dos módulos com franquia (Agenda, Fiscal); ausente = Essencial. */
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  niveis!: Niveis;
 
   @Column({ name: 'numero_usuarios', type: 'int', default: 1 })
   numeroUsuarios!: number;

@@ -1,6 +1,7 @@
 import {
   IsBoolean,
   IsEmail,
+  IsEnum,
   IsOptional,
   IsString,
   IsUUID,
@@ -8,6 +9,7 @@ import {
   Matches,
   MaxLength,
 } from 'class-validator';
+import { TipoConsumo } from '../../billing/modules.catalog';
 
 /** Papel do produto (texto): minúsculas e `_`, como os papéis do Clinic. */
 const PAPEL = /^[a-z_]{2,30}$/;
@@ -70,6 +72,19 @@ export class RemoverAcessoDto {
 
   @IsUUID()
   usuarioId!: string;
+}
+
+/** Mensagem de WhatsApp enviada ou NFS-e emitida (franquia da Agenda/Fiscal). */
+export class RegistrarConsumoDto {
+  @IsUUID()
+  tenantId!: string;
+
+  @IsEnum(TipoConsumo, { message: 'Tipo inválido: whatsapp ou nfse.' })
+  tipo!: TipoConsumo;
+
+  /** Id da mensagem/nota no produto: reenvio não conta duas vezes. */
+  @IsUUID()
+  referencia!: string;
 }
 
 /** Teleconsulta concluída no produto (franquia da Telemedicina). */

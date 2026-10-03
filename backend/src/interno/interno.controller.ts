@@ -21,6 +21,7 @@ import {
   AtualizarAcessoDto,
   CriarAcessoDto,
   ReenviarConviteDto,
+  RegistrarConsumoDto,
   RegistrarTeleconsultaDto,
   RemoverAcessoDto,
 } from './dtos/acessos.dtos';
@@ -85,6 +86,21 @@ export class InternoController {
     return this.assinaturas.registrarTeleconsulta(
       produto,
       dto.tenantId,
+      dto.referencia,
+    );
+  }
+
+  /** Mensagem de WhatsApp ou NFS-e: conta na franquia do ciclo (idempotente). */
+  @Post('consumos')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  consumo(
+    @ProdutoServico() produto: Produto,
+    @Body() dto: RegistrarConsumoDto,
+  ): Promise<void> {
+    return this.assinaturas.registrarConsumo(
+      produto,
+      dto.tenantId,
+      dto.tipo,
       dto.referencia,
     );
   }

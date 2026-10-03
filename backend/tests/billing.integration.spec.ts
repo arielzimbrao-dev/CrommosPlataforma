@@ -81,11 +81,11 @@ describeDb('Billing (integração)', () => {
   it('leitura: admin e financeiro; gestor → 403', async () => {
     for (const papel of ['admin', 'financeiro']) {
       const a = await http().get('/assinatura').set(como(papel)).expect(200);
-      // Agenda: admin e gestor (o financeiro não abre a agenda) × 25,50.
+      // Agenda: admin e gestor (o financeiro não abre a agenda) × 26,78.
       expect(a.body).toMatchObject({
         modulosAtivos: ['agenda'],
         numeroUsuarios: 3,
-        valor: 51,
+        valor: 53.56,
         teleconsultas: null,
       });
       expect(a.body).not.toHaveProperty('faixa');
@@ -94,9 +94,10 @@ describeDb('Billing (integração)', () => {
       ).toEqual({
         code: 'financeiro',
         pessoas: 3,
-        preco: 29.75,
-        degraus: [{ qtd: 3, preco: 29.75 }],
-        subtotal: 89.25,
+        preco: 31.24,
+        nivel: 'essencial',
+        degraus: [{ qtd: 3, preco: 31.24 }],
+        subtotal: 93.72,
       });
       await http().get('/assinatura/faturas').set(como(papel)).expect(200);
       await http()
@@ -119,16 +120,16 @@ describeDb('Billing (integração)', () => {
         .send({ modulosAtivos: ['agenda', 'financeiro'] })
         .expect(403);
     }
-    // + Financeiro: 3 assentos (admin, financeiro, gestor) × 29,75
+    // + Financeiro: 3 assentos (admin, financeiro, gestor) × 31,24
     const sim = await http()
       .post('/assinatura/simular')
       .set(como('admin'))
       .send({ modulos: ['agenda', 'financeiro'], plano: 'mensal' })
       .expect(201);
     expect(sim.body).toMatchObject({
-      valor: 140.25,
-      valorAtual: 51,
-      ajuste: { tipo: 'complementar', valor: 89.25 },
+      valor: 147.28,
+      valorAtual: 53.56,
+      ajuste: { tipo: 'complementar', valor: 93.72 },
     });
     const res = await http()
       .patch('/assinatura')
@@ -137,11 +138,11 @@ describeDb('Billing (integração)', () => {
       .expect(200);
     expect(res.body.ajuste).toMatchObject({
       tipo: 'complementar',
-      valor: 89.25,
+      valor: 93.72,
     });
     expect(res.body.fatura).toMatchObject({
       tipo: 'complementar',
-      valorLiquido: 89.25,
+      valorLiquido: 93.72,
       status: 'pendente',
     });
     const [{ n }] = await ds.query(
@@ -158,7 +159,7 @@ describeDb('Billing (integração)', () => {
       .set(como('admin'))
       .send({ modulosAtivos: ['agenda'] })
       .expect(200);
-    expect(res.body.ajuste).toMatchObject({ tipo: 'credito', valor: 89.25 });
+    expect(res.body.ajuste).toMatchObject({ tipo: 'credito', valor: 93.72 });
     expect(res.body.saldoCredito).toBe(0);
     const lista = await http()
       .get('/assinatura/faturas')
@@ -180,7 +181,7 @@ describeDb('Billing (integração)', () => {
       convitePendente: true,
     });
     const a = await http().get('/assinatura').set(como('admin')).expect(200);
-    expect(a.body).toMatchObject({ numeroUsuarios: 4, valor: 76.5 });
+    expect(a.body).toMatchObject({ numeroUsuarios: 4, valor: 80.34 });
     const sim = await http()
       .post('/assinatura/simular')
       .set(como('admin'))
@@ -191,8 +192,8 @@ describeDb('Billing (integração)', () => {
       })
       .expect(201);
     expect(sim.body).toMatchObject({
-      valorAtual: 76.5,
-      valor: 98.18, // 4º assento da Agenda: 21,68
+      valorAtual: 80.34,
+      valor: 103.1, // 4º assento da Agenda: 22,76
       numeroUsuarios: 5,
     });
     await http()
@@ -224,11 +225,11 @@ describeDb('Billing (integração)', () => {
       })
       .expect(201);
     expect(sem.body).toMatchObject({
-      valorAtual: 76.5,
-      valor: 51,
+      valorAtual: 80.34,
+      valor: 53.56,
       numeroUsuarios: 3,
     });
-    // + Múltiplas unidades: 4 pessoas × 12,75 → complementar pendente.
+    // + Múltiplas unidades: 4 pessoas × 13,39 → complementar pendente.
     await http()
       .patch('/assinatura')
       .set(como('admin'))

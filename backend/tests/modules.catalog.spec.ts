@@ -1,9 +1,11 @@
 import {
   ESCADA,
+  FRANQUIAS,
   FRANQUIA_TELECONSULTAS,
   MODULES,
   MODULE_CODES,
   ModuleCode,
+  Nivel,
   PRECO_TELECONSULTA_EXCEDENTE,
   PessoaAcesso,
   PlanoPeriodo,
@@ -40,15 +42,15 @@ describe('tabela de preços (aprovada pelo dono, docs/03)', () => {
     expect(
       Object.fromEntries(MODULES.map((m) => [m.code, m.precoPorUsuario])),
     ).toEqual({
-      agenda: 25.5,
-      prontuario: 25.5,
-      financeiro: 29.75,
-      exames: 17,
-      multiplas_unidades: 12.75,
-      convenio: 34,
-      fiscal: 25.5,
-      estoque: 8.5,
-      telemedicina: 42.5,
+      agenda: 26.78,
+      prontuario: 26.78,
+      financeiro: 31.24,
+      exames: 17.85,
+      multiplas_unidades: 13.39,
+      convenio: 35.7,
+      fiscal: 26.78,
+      estoque: 8.93,
+      telemedicina: 44.63,
     });
     expect(MODULES.some((m) => 'precoADefinir' in m)).toBe(false);
     expect(MODULE_CODES).toHaveLength(9);
@@ -64,25 +66,25 @@ describe('tabela de preços (aprovada pelo dono, docs/03)', () => {
     // cada assento arredondado ao centavo (meio centavo para cima)
     expect(
       [1, 3, 4, 10, 11, 30, 31, 90].map((k) => precoAssento(Agenda, k)),
-    ).toEqual([25.5, 25.5, 21.68, 21.68, 19.13, 19.13, 16.58, 16.58]);
-    expect([1, 4, 11, 31].map((k) => precoAssento(Financeiro, k))).toEqual([
-      29.75, 25.29, 22.31, 19.34,
+    ).toEqual([26.78, 26.78, 22.76, 22.76, 20.09, 20.09, 17.41, 17.41]);
+    expect([1, 4].map((k) => precoAssento(Financeiro, k))).toEqual([
+      31.24, 26.55,
     ]);
-    expect([1, 4, 11, 31].map((k) => precoAssento(Estoque, k))).toEqual([
-      8.5, 7.23, 6.38, 5.53,
+    expect([1, 4, 11].map((k) => precoAssento(Estoque, k))).toEqual([
+      8.93, 7.59, 6.7,
     ]);
-    expect([1, 4, 11, 31].map((k) => precoAssento(Telemedicina, k))).toEqual([
-      42.5, 36.13, 31.88, 27.63,
+    expect([1, 4].map((k) => precoAssento(Telemedicina, k))).toEqual([
+      44.63, 37.94,
     ]);
     expect(precoAssento('legado' as ModuleCode, 1)).toBe(0);
   });
 
-  it('degraus e subtotal: "Agenda: 5 pessoas — 3 × R$ 25,50 + 2 × R$ 21,68 = R$ 119,86"', () => {
+  it('degraus e subtotal: "Agenda: 5 pessoas — 3 × R$ 26,78 + 2 × R$ 22,76 = R$ 125,86"', () => {
     expect(degrausDe(Agenda, 5)).toEqual([
-      { qtd: 3, preco: 25.5 },
-      { qtd: 2, preco: 21.68 },
+      { qtd: 3, preco: 26.78 },
+      { qtd: 2, preco: 22.76 },
     ]);
-    expect(subtotalModulo(Agenda, 5)).toBe(119.86);
+    expect(subtotalModulo(Agenda, 5)).toBe(125.86);
     expect(degrausDe(Agenda, 0)).toEqual([]);
     expect(subtotalModulo(Agenda, 0)).toBe(0);
     expect(degrausDe(Exames, 35).map((d) => d.qtd)).toEqual([3, 7, 20, 5]);
@@ -114,12 +116,13 @@ describe('assentos derivados dos papéis', () => {
     expect(itensDe(a).find((i) => i.code === Agenda)).toEqual({
       code: Agenda,
       pessoas: 5,
-      preco: 25.5,
+      preco: 26.78,
+      nivel: Nivel.Essencial,
       degraus: [
-        { qtd: 3, preco: 25.5 },
-        { qtd: 2, preco: 21.68 },
+        { qtd: 3, preco: 26.78 },
+        { qtd: 2, preco: 22.76 },
       ],
-      subtotal: 119.86,
+      subtotal: 125.86,
     });
   });
 });
@@ -141,23 +144,21 @@ describe('calcularValor — perfis de referência (mensal)', () => {
   ]);
   const M = PlanoPeriodo.Mensal;
 
-  it('consultório: Agenda + Prontuário = 76,50; + Financeiro = 106,25', () => {
-    expect(calcularValor([Agenda, Prontuario], consultorio, M)).toBe(76.5);
+  it('consultório: Agenda + Prontuário = 80,34; + Financeiro = 111,58', () => {
+    expect(calcularValor([Agenda, Prontuario], consultorio, M)).toBe(80.34);
     expect(
       calcularValor([Agenda, Prontuario, Financeiro], consultorio, M),
-    ).toBe(106.25);
+    ).toBe(111.58);
   });
 
-  // A proposta (seção 1 do artefato) somou os assentos sem arredondar
-  // (306,85 / 1.028,50 / 1.765,03). Com cada assento arredondado ao centavo,
-  // como na tabela publicada (21,68 etc.), a conta bate com a fatura:
-  it('clínica pequena (Agenda, Prontuário, Financeiro, Exames) = 306,86', () => {
+  // Cada assento arredondado ao centavo, como na tabela publicada (22,76 etc.).
+  it('clínica pequena (Agenda, Prontuário, Financeiro, Exames) = 322,23', () => {
     expect(
       calcularValor([Agenda, Prontuario, Financeiro, Exames], pequena, M),
-    ).toBe(306.86);
+    ).toBe(322.23);
   });
 
-  it('clínica média (+ Múltiplas unidades) = 1.028,60; com os 9 módulos = 1.765,24', () => {
+  it('clínica média (+ Múltiplas unidades) = 1.080,02; com os 9 módulos = 1.853,56', () => {
     const cinco = [Agenda, Prontuario, Financeiro, Exames, MultiplasUnidades];
     expect(media.porModulo).toMatchObject({
       agenda: 16,
@@ -165,17 +166,42 @@ describe('calcularValor — perfis de referência (mensal)', () => {
       financeiro: 4,
       multiplas_unidades: 18,
     });
-    expect(calcularValor(cinco, media, M)).toBe(1028.6);
-    expect(calcularValor(MODULE_CODES, media, M)).toBe(1765.24);
+    expect(calcularValor(cinco, media, M)).toBe(1080.02);
+    expect(calcularValor(MODULE_CODES, media, M)).toBe(1853.56);
     expect(
       calcularValor([Convenio, Fiscal, Estoque, Telemedicina], media, M),
-    ).toBe(736.64);
+    ).toBe(773.54);
   });
 
-  it('desconto do plano depois da escada: semestral −5%, anual −20%', () => {
+  it('desconto do plano depois da escada: semestral −5%, anual −10%', () => {
     const quatro = [Agenda, Prontuario, Financeiro, Exames];
-    expect(calcularValor(quatro, pequena, PlanoPeriodo.Semestral)).toBe(291.52);
-    expect(calcularValor(quatro, pequena, PlanoPeriodo.Anual)).toBe(245.49);
+    expect(calcularValor(quatro, pequena, PlanoPeriodo.Semestral)).toBe(306.12);
+    expect(calcularValor(quatro, pequena, PlanoPeriodo.Anual)).toBe(290.01);
+  });
+
+  it('nível da Agenda/Fiscal soma ao preço do assento (escada sobre o novo preço)', () => {
+    const niveis = { [Agenda]: Nivel.Profissional, [Fiscal]: Nivel.Avancado };
+    expect(precoAssento(Agenda, 4, Nivel.Profissional)).toBe(29.56);
+    expect(precoAssento(Agenda, 1, Nivel.Avancado)).toBe(44.78);
+    expect(subtotalModulo(Agenda, 5, Nivel.Profissional)).toBe(163.46);
+    expect(subtotalModulo(Fiscal, 2, Nivel.Avancado)).toBe(103.56);
+    // Módulo sem franquia ignora o nível.
+    expect(subtotalModulo(Exames, 3, Nivel.Avancado)).toBe(53.55);
+    expect(
+      calcularValor(
+        [Agenda, Prontuario, Financeiro, Exames],
+        pequena,
+        M,
+        niveis,
+      ),
+    ).toBe(359.83); // 322,23 + (163,46 − 125,86)
+    expect(
+      itensDe(pequena, niveis).find((i) => i.code === Agenda),
+    ).toMatchObject({
+      nivel: Nivel.Profissional,
+      preco: 34.78,
+      subtotal: 163.46,
+    });
   });
 
   it('sem módulos ou módulo desconhecido → R$ 0', () => {
@@ -218,6 +244,38 @@ describe('propriedade: adicionar uma pessoa nunca reduz o valor', () => {
         calcularValor(mods, contarAssentos(equipe), plano),
       );
     }
+  });
+});
+
+describe('franquias por nível: WhatsApp na Agenda e NFS-e no Fiscal', () => {
+  it('tabela aprovada pelo dono (03/10/2026)', () => {
+    expect(
+      FRANQUIAS.map((f) => [
+        f.modulo,
+        f.tipo,
+        f.excedente,
+        f.niveis.essencial,
+        f.niveis.profissional,
+        f.niveis.avancado,
+      ]),
+    ).toEqual([
+      [
+        Agenda,
+        'whatsapp',
+        0.05,
+        { acrescimo: 0, porAssento: 150 },
+        { acrescimo: 8, porAssento: 300 },
+        { acrescimo: 18, porAssento: 600 },
+      ],
+      [
+        Fiscal,
+        'nfse',
+        0.15,
+        { acrescimo: 0, porAssento: 100 },
+        { acrescimo: 10, porAssento: 300 },
+        { acrescimo: 25, porAssento: 800 },
+      ],
+    ]);
   });
 });
 

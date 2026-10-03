@@ -115,6 +115,7 @@ constante; `404` sem chave configurada. O `produto` vem da chave, não do corpo.
 | `POST /interno/acessos/reenviar-convite` | `{ tenantId, usuarioId }` | `204` (link novo do mesmo tipo: definir senha ou aceite); `409` `'Esta pessoa já aceitou o convite.'` |
 | `GET /interno/pessoas/:usuarioId` | — | `{ id, nome, email, emailConfirmado }`; `404` se a pessoa não tem acesso a nenhum tenant do produto |
 | `POST /interno/teleconsultas` | `{ tenantId, referencia }` | `204` — teleconsulta **concluída** no produto (franquia da Telemedicina). `referencia` = id do atendimento no produto (UUID): reenvio não conta duas vezes. Conta no ciclo pela data de chegada (Brasília) |
+| `POST /interno/consumos` | `{ tenantId, tipo, referencia }` | `204` — `tipo` = `whatsapp` (mensagem enviada ao paciente) ou `nfse` (nota emitida); conta na franquia do nível da Agenda/do Fiscal. `referencia` = id da mensagem/nota no produto (UUID): reenvio não conta duas vezes. Conta no ciclo pela data de chegada (Brasília). `400` tipo inválido |
 
 ## API interna do produto (chamada pela plataforma)
 
@@ -163,8 +164,16 @@ Pontos que o contrato deixava em aberto; valeu a opção mais simples.
   ao centavo — somar uma pessoa nunca reduz o valor. Pessoas = acessos `ativo` (convite pendente
   conta); quem ocupa assento em cada módulo vem do papel (espelha o menu do Clinic) e, nos clínicos
   (Prontuário, Exames, Telemedicina), de `acessos.clinico`. Mudança de acesso → pró-rata na hora.
-  `GET /assinatura` traz `itens: [{ code, pessoas, preco, degraus: [{ qtd, preco }], subtotal }]`
-  (`preco` = cheio), `escada` e `teleconsultas: { realizadas, incluidas } | null` (só com
+  `GET /assinatura` traz `itens: [{ code, pessoas, preco, nivel, degraus: [{ qtd, preco }], subtotal }]`
+  (`preco` = cheio do nível), `niveis` (`{ agenda?, fiscal? }`: `essencial` | `profissional` |
+  `avancado`; ausente = Essencial), `franquias` (tabela de níveis: acréscimo no assento, unidades
+  por assento e preço do excedente), `consumos: [{ tipo, modulo, unidade, nivel, usados,
+  incluidos, excedente }]` (Agenda/Fiscal contratados; o excedente entra na fatura da renovação em
+  `itens.consumosExcedentes`, com `quantidade`, `valorUnitario` e `valor` — migration 15,
+  `crommos.consumos`; o ciclo do trial não cobra; o nível vigente no fim do ciclo vale para o ciclo
+  inteiro). `PATCH /assinatura` e `simular` aceitam `niveis` (só os informados mudam; a troca de
+  nível entra no pró-rata como uma troca de módulo), `escada` e
+  `teleconsultas: { realizadas, incluidas } | null` (só com
   Telemedicina: 20 por assento × meses do ciclo; o excedente, R$ 2,00 cada, entra na fatura da
   renovação em `itens.teleconsultasExcedentes: { quantidade, valorUnitario, valor, realizadas,
   incluidas }` — migration 11, `crommos.teleconsultas`; o ciclo do trial não cobra). **Assinaturas
