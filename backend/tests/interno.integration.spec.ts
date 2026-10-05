@@ -632,4 +632,68 @@ describeDb('API interna de acessos (integração)', () => {
       }),
     ]);
   });
+  it('POST /consumos: avisa os admins por e-mail ao chegar a 80% e a 100% da franquia (uma vez por ciclo)', async () => {
+    const T_ALERTA = randomUUID();
+    const hoje = hojeISO();
+    await criarAssinatura(ds, {
+      tenantId: T_ALERTA,
+      tenantNome: 'Clínica Alerta',
+      modulosAtivos: [ModuleCode.Agenda],
+      cicloInicio: hoje,
+      cicloFim: somarMeses(hoje, 1),
+    });
+    const admin = await criarPessoa(ds, { email: 'alerta-admin@exemplo.com' });
+    await criarAcesso(ds, { usuarioId: admin.id, tenantId: T_ALERTA });
+    const rec = await criarPessoa(ds, { email: 'alerta-rec@exemplo.com' });
+    await criarAcesso(ds, {
+      usuarioId: rec.id,
+      tenantId: T_ALERTA,
+      papel: 'recepcao',
+    });
+    const enviar = () =>
+      interno('post', '/consumos')
+        .send({
+          tenantId: T_ALERTA,
+          tipo: 'whatsapp',
+          referencia: randomUUID(),
+        })
+        .expect(204);
+    const mais = (n: number) =>
+      ds.query(
+        `INSERT INTO crommos.consumos (produto, tenant_id, tipo, referencia)
+         SELECT 'clinic', $1, 'whatsapp', gen_random_uuid() FROM generate_series(1, $2::int)`,
+        [T_ALERTA, n],
+      );
+    const alerta = mail.sendAlertaFranquia;
+    alerta.mockClear();
+
+    // Franquia Essencial: 150 por mês. 80% = 120.
+    await mais(118);
+    await enviar(); // 119
+    expect(alerta).not.toHaveBeenCalled();
+    await enviar(); // 120
+    expect(alerta).toHaveBeenCalledTimes(1);
+    expect(alerta).toHaveBeenCalledWith(
+      'alerta-admin@exemplo.com',
+      expect.objectContaining({
+        clinica: 'Clínica Alerta',
+        unidade: 'mensagens de WhatsApp',
+        usados: 120,
+        incluidos: 150,
+        limiar: 80,
+      }),
+    );
+    await enviar(); // 121: não repete
+    expect(alerta).toHaveBeenCalledTimes(1);
+
+    await mais(28);
+    await enviar(); // 150
+    expect(alerta).toHaveBeenCalledTimes(2);
+    expect(alerta).toHaveBeenLastCalledWith(
+      'alerta-admin@exemplo.com',
+      expect.objectContaining({ usados: 150, limiar: 100 }),
+    );
+    await enviar(); // 151: não repete
+    expect(alerta).toHaveBeenCalledTimes(2);
+  });
 });

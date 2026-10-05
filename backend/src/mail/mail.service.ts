@@ -117,6 +117,40 @@ export class MailService {
     );
   }
 
+  /**
+   * A clínica chegou a 80% ou 100% da franquia do ciclo (WhatsApp, NFS-e).
+   * `excedente` null = período de avaliação (o além da franquia não é cobrado).
+   */
+  sendAlertaFranquia(
+    email: string,
+    a: {
+      clinica: string | null;
+      unidade: string;
+      usados: number;
+      incluidos: number;
+      limiar: 80 | 100;
+      excedente: number | null;
+    },
+  ): Promise<void> {
+    const link = `${urlDoFrontend()}/assinatura`;
+    const preco =
+      a.excedente === null
+        ? 'No período de avaliação, o que passar da franquia não é cobrado.'
+        : `Além da franquia, cada uma custa ${a.excedente.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}, na próxima fatura.`;
+    return this.enviar(
+      email,
+      `${a.clinica ?? 'A clínica'} usou ${a.limiar}% das ${a.unidade} do ciclo — Crommos`,
+      link,
+      [
+        `${a.clinica ?? 'A clínica'} já usou ${a.usados} de ${a.incluidos} ${a.unidade} incluídas neste ciclo.`,
+        a.limiar === 100
+          ? `A franquia acabou. Os envios continuam. ${preco}`
+          : preco,
+        `Para ver o consumo ou mudar de nível: ${link}`,
+      ],
+    );
+  }
+
   private async enviar(
     email: string,
     assunto: string,

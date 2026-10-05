@@ -97,6 +97,7 @@ function make(
     faturas as never,
     ds as never,
     audit as never,
+    {} as never,
   );
   return { svc, repo, faturas, assinRepo, fatRepo, acessoRepo, em, ds, audit };
 }

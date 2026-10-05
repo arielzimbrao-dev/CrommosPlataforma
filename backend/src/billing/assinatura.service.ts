@@ -15,6 +15,7 @@ import { AuditService } from '../audit/audit.service';
 import { Acesso } from '../auth/acesso.entity';
 import { hojeISO } from '../common/data-brasil';
 import { PaginacaoDto, paginar } from '../common/paginacao';
+import { MailService } from '../mail/mail.service';
 import type { Produto } from '../common/produtos';
 import { Assinatura } from './assinatura.entity';
 import { SimularDto, UpdateAssinaturaDto } from './dtos/billing.dtos';
@@ -242,6 +243,7 @@ export class AssinaturaService {
     private readonly faturas: Repository<Fatura>,
     @Inject('DATA_SOURCE') private readonly ds: DataSource,
     private readonly audit: AuditService,
+    private readonly mail: MailService,
   ) {}
 
   /**
@@ -924,11 +926,59 @@ export class AssinaturaService {
     tipo: TipoConsumo,
     referencia: string,
   ): Promise<void> {
-    await this.ds.query(
+    const novo = await this.ds.query<unknown[]>(
       `INSERT INTO crommos.consumos (produto, tenant_id, tipo, referencia)
-       VALUES ($1, $2, $3, $4) ON CONFLICT (produto, tipo, referencia) DO NOTHING`,
+       VALUES ($1, $2, $3, $4) ON CONFLICT (produto, tipo, referencia) DO NOTHING
+       RETURNING id`,
       [produto, tenantId, tipo, referencia],
     );
+    if (novo.length) await this.alertarFranquia(produto, tenantId, tipo);
+  }
+
+  /**
+   * E-mail aos admins ao chegar a 80% e a 100% da franquia do ciclo, uma vez
+   * por limiar (a chave de `alertas_franquia` decide entre envios simultâneos).
+   * Falha no envio não recusa o consumo.
+   */
+  private async alertarFranquia(
+    produto: Produto,
+    tenantId: string,
+    tipo: TipoConsumo,
+  ): Promise<void> {
+    const a = await this.buscar({ produto, tenantId });
+    const c = a && (await this.consumos(a)).find((x) => x.tipo === tipo);
+    if (!a || !c?.incluidos) return;
+    const limiares = ([80, 100] as const).filter(
+      (l) => c.usados * 100 >= l * c.incluidos,
+    );
+    const limiar = limiares.at(-1);
+    if (!limiar) return;
+    const novos = await this.ds.query<{ limiar: number }[]>(
+      `INSERT INTO crommos.alertas_franquia (produto, tenant_id, tipo, ciclo_inicio, limiar)
+       SELECT $1, $2, $3, $4, unnest($5::smallint[])
+       ON CONFLICT DO NOTHING RETURNING limiar`,
+      [produto, tenantId, tipo, a.cicloInicio, limiares],
+    );
+    // Passou dos dois de uma vez: só o maior.
+    if (!novos.some((n) => Number(n.limiar) === limiar)) return;
+    const admins = await this.ds.query<{ email: string }[]>(
+      `SELECT u.email FROM crommos.acessos ac
+         JOIN crommos.usuarios u ON u.id = ac.usuario_id AND u.deleted_at IS NULL
+        WHERE ac.produto = $1 AND ac.tenant_id = $2 AND ac.papel = 'admin'
+          AND ac.ativo AND NOT ac.convite_pendente`,
+      [produto, tenantId],
+    );
+    const dados = {
+      clinica: a.tenantNome ?? null,
+      unidade: c.unidade,
+      usados: c.usados,
+      incluidos: c.incluidos,
+      limiar,
+      excedente: emTrial(a.emTrialAte, hojeISO()) ? null : c.excedente,
+    };
+    for (const { email } of admins) {
+      await this.mail.sendAlertaFranquia(email, dados).catch(() => undefined);
+    }
   }
 
   /**

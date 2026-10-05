@@ -255,6 +255,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
       '13-dois-fatores.sql',
       '14-exclusao-propagada.sql',
       '15-niveis-e-consumos.sql',
+      '16-alertas-franquia.sql',
     ]);
     expect(await migrarPlataforma()).toEqual([]);
     estruturaVazio = await estrutura();
@@ -269,6 +270,7 @@ describeDb('Migrations da plataforma (plat_int)', () => {
       expect(rows.map((r) => r.table_name)).toEqual([
         '_migrations',
         'acessos',
+        'alertas_franquia',
         'assinaturas',
         'auditoria',
         'clientes',

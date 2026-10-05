@@ -102,4 +102,31 @@ describe('MailService', () => {
     expect(logado).not.toContain('tok-prod');
     expect(logado).not.toContain('ana@x.com');
   });
+  it('alerta de franquia: 80% avisa quanto falta e o preço do excedente; 100% e trial dizem o que acontece', async () => {
+    process.env.FRONTEND_URL = 'https://app.crommos.com';
+    const base = {
+      clinica: 'Clínica Sol',
+      unidade: 'mensagens de WhatsApp',
+      usados: 120,
+      incluidos: 150,
+      excedente: 0.05,
+    };
+    await make().sendAlertaFranquia('ana@x.com', { ...base, limiar: 80 });
+    expect(enviarEmail.mock.calls[0][1]).toBe(
+      'Clínica Sol usou 80% das mensagens de WhatsApp do ciclo — Crommos',
+    );
+    expect(corpo()).toContain('120 de 150 mensagens de WhatsApp');
+    expect(corpo()).toMatch(/R\$\s0,05/);
+    expect(corpo()).toContain('https://app.crommos.com/assinatura');
+
+    await make().sendAlertaFranquia('ana@x.com', {
+      ...base,
+      usados: 150,
+      limiar: 100,
+      excedente: null,
+    });
+    expect(enviarEmail.mock.calls[1][1]).toContain('usou 100%');
+    expect(corpo(1)).toContain('período de avaliação');
+    expect(corpo(1)).not.toContain('R$');
+  });
 });
