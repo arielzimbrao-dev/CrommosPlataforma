@@ -2,11 +2,15 @@ import {
   ArgumentsHost,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Logger,
+  NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { AllExceptionsFilter } from 'src/common/exceptions/all-exceptions.filter';
+import { ThrottlerException } from '@nestjs/throttler';
 
 describe('AllExceptionsFilter', () => {
   const filter = new AllExceptionsFilter();
@@ -213,6 +217,93 @@ describe('AllExceptionsFilter', () => {
       const { host, send } = buildHost('/auth/verificar-token?token=segredo');
       filter.catch(new HttpException('x', 400), host);
       expect(send.mock.calls[0][0].path).toBe('/auth/verificar-token');
+    });
+  });
+  describe('erros_logs', () => {
+    const query = jest.fn().mockResolvedValue(undefined);
+    const comBanco = new AllExceptionsFilter({ query });
+    const host = (url: string, extra: Record<string, unknown> = {}) =>
+      ({
+        switchToHttp: () => ({
+          getResponse: () => ({
+            status: () => ({ send: jest.fn() }),
+            setHeader: jest.fn(),
+          }),
+          getRequest: () => ({
+            url,
+            method: 'POST',
+            headers: { 'user-agent': 'Edge' },
+            ip: '10.0.0.1',
+            ...extra,
+          }),
+        }),
+      }) as unknown as ArgumentsHost;
+    const linha = () => query.mock.calls[0][1] as unknown[];
+
+    beforeEach(() => query.mockClear());
+
+    it('grava o 500 com tenant, pessoa, caminho sem segredo e só os NOMES dos campos do corpo', () => {
+      const tenantId = '11111111-1111-4111-8111-111111111111';
+      const sub = '22222222-2222-4222-8222-222222222222';
+      comBanco.catch(
+        new Error('boom'),
+        host('/auth/link/abcdefghijklmnopqrstuvwxyz?token=x', {
+          user: { tenantId, sub },
+          body: { email: 'ana@x.com', password: 'segredo-1' },
+        }),
+      );
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(query.mock.calls[0][0]).toContain(
+        'INSERT INTO crommos.erros_logs',
+      );
+      expect(linha()).toEqual(
+        expect.arrayContaining([
+          'POST',
+          '/auth/link/***',
+          500,
+          tenantId,
+          sub,
+          '10.0.0.1',
+          'Edge',
+        ]),
+      );
+      expect(JSON.parse(linha()[7] as string)).toEqual({
+        campos: ['email', 'password'],
+      });
+      const v = JSON.stringify(linha());
+      expect(v).toContain('boom');
+      expect(v).not.toContain('ana@x.com');
+      expect(v).not.toContain('segredo-1');
+    });
+
+    it('erro do banco vai sem a mensagem (pode ter e-mail ou CPF)', () => {
+      const e = Object.assign(new Error('Key (email)=(ana@x.com) já existe'), {
+        code: '23502',
+        table: 'usuarios',
+      });
+      comBanco.catch(e, host('/a'));
+      const v = JSON.stringify(linha());
+      expect(v).toContain('tabela=usuarios');
+      expect(v).not.toContain('ana@x.com');
+    });
+
+    it('grava 400/403/409; não grava 401, 404, 429 nem a origem recusada pelo CORS', () => {
+      comBanco.catch(new BadRequestException('x'), host('/a'));
+      comBanco.catch(new ForbiddenException(), host('/a'));
+      comBanco.catch(new ConflictException('y'), host('/a'));
+      expect(query).toHaveBeenCalledTimes(3);
+      query.mockClear();
+      comBanco.catch(new UnauthorizedException(), host('/a'));
+      comBanco.catch(new NotFoundException(), host('/a'));
+      comBanco.catch(new ThrottlerException(), host('/a'));
+      comBanco.catch(new Error('Not allowed by CORS'), host('/a'));
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it('falha ao gravar não vira um segundo erro', async () => {
+      query.mockRejectedValueOnce(new Error('banco fora'));
+      expect(() => comBanco.catch(new Error('boom'), host('/a'))).not.toThrow();
+      await new Promise((r) => setImmediate(r));
     });
   });
 });

@@ -8,8 +8,14 @@ function fakeDs(obteve: boolean) {
       sql.includes('pg_try_advisory_lock') ? [{ ok: obteve }] : [],
     ),
   );
+  // Purga de erros_logs (fora do lock runner): 1 linha na 2ª execução.
+  const purga = jest
+    .fn()
+    .mockResolvedValueOnce([[], 0])
+    .mockResolvedValueOnce([[], 1]);
   return {
     ds: {
+      query: purga,
       createQueryRunner: () => ({
         connect: jest.fn(),
         release: jest.fn(),
@@ -49,6 +55,7 @@ describe('SessoesCron', () => {
     expect(log).toHaveBeenCalledWith('Sessões vencidas removidas: 2');
     // A purga dos registros de acesso vai no mesmo job.
     expect(log).toHaveBeenCalledWith('Registros de acesso além da retenção: 3');
+    expect(log).toHaveBeenCalledWith('Erros da API além de 7 dias: 1');
   });
 
   it('não limpa quando outra réplica detém o lock', async () => {

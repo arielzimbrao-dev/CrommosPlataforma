@@ -593,6 +593,19 @@ describeDb('API interna de acessos (integração)', () => {
     await interno('post', '/consumos')
       .send({ tenantId: T_CONS, tipo: 'sms', referencia: ref })
       .expect(400);
+    // O 400 fica em erros_logs (gravado depois da resposta).
+    let erro: { status: number; requisicao: unknown }[] = [];
+    for (let i = 0; i < 20 && !erro.length; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      erro = await ds.query(
+        `SELECT status, requisicao FROM crommos.erros_logs
+          WHERE caminho = '/interno/consumos' AND metodo = 'POST'`,
+      );
+    }
+    expect(erro[0]).toEqual({
+      status: 400,
+      requisicao: { campos: ['tenantId', 'tipo', 'referencia'] },
+    });
     for (const referencia of [ref, ref, randomUUID()]) {
       await interno('post', '/consumos')
         .send({ tenantId: T_CONS, tipo: 'whatsapp', referencia })

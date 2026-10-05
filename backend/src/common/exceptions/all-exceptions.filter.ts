@@ -4,9 +4,18 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Inject,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import type { DataSource } from 'typeorm';
+import {
+  caminhoParaLog,
+  erroParaLog,
+  registrarErro,
+  STATUS_SEM_REGISTRO,
+} from './erros-log';
 import { traduzirValidacao } from './mensagens-validacao';
 
 /**
@@ -82,6 +91,13 @@ function traduzirPadraoNest(status: number, message: unknown): unknown {
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
 
+  /** Sem banco (testes unitários), só responde. */
+  constructor(
+    @Optional()
+    @Inject('DATA_SOURCE')
+    private readonly ds?: Pick<DataSource, 'query'>,
+  ) {}
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -129,6 +145,30 @@ export class AllExceptionsFilter implements ExceptionFilter {
       path: request.url.split('?')[0],
       message,
       ...(code === undefined ? {} : { code }),
+    });
+
+    // Depois de responder: gravar não atrasa nem quebra a resposta.
+    const cors =
+      exception instanceof Error && exception.message === 'Not allowed by CORS';
+    if (!this.ds || cors || STATUS_SEM_REGISTRO.includes(status)) return;
+    const req = request as Request & {
+      user?: { tenantId?: string; sub?: string };
+    };
+    const corpo: unknown = req.body;
+    void registrarErro(this.ds, {
+      metodo: req.method,
+      caminho: caminhoParaLog(req.url),
+      status,
+      tenantId: req.user?.tenantId,
+      usuarioId: req.user?.sub,
+      resposta: { message, ...(code === undefined ? {} : { code }) },
+      erro: exception instanceof HttpException ? null : erroParaLog(exception),
+      requisicao:
+        corpo && typeof corpo === 'object'
+          ? { campos: Object.keys(corpo) }
+          : null,
+      ip: req.ip,
+      navegador: req.headers?.['user-agent'],
     });
   }
 }
