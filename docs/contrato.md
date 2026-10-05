@@ -115,7 +115,7 @@ constante; `404` sem chave configurada. O `produto` vem da chave, não do corpo.
 | `POST /interno/acessos/reenviar-convite` | `{ tenantId, usuarioId }` | `204` (link novo do mesmo tipo: definir senha ou aceite); `409` `'Esta pessoa já aceitou o convite.'` |
 | `GET /interno/pessoas/:usuarioId` | — | `{ id, nome, email, emailConfirmado }`; `404` se a pessoa não tem acesso a nenhum tenant do produto |
 | `POST /interno/teleconsultas` | `{ tenantId, referencia }` | `204` — teleconsulta **concluída** no produto (franquia da Telemedicina). `referencia` = id do atendimento no produto (UUID): reenvio não conta duas vezes. Conta no ciclo pela data de chegada (Brasília) |
-| `POST /interno/consumos` | `{ tenantId, tipo, referencia }` | `204` — `tipo` = `whatsapp` (mensagem enviada ao paciente) ou `nfse` (nota emitida); conta na franquia do nível da Agenda/do Fiscal. `referencia` = id da mensagem/nota no produto (UUID): reenvio não conta duas vezes. Conta no ciclo pela data de chegada (Brasília). `400` tipo inválido |
+| `POST /interno/consumos` | `{ tenantId, tipo, referencia }` | `204` — `tipo` = `whatsapp` (mensagem enviada ao paciente) ou `nfse` (nota emitida); conta na franquia do nível da Agenda/do Fiscal. `referencia` = id da mensagem/nota no produto (UUID): reenvio não conta duas vezes. Conta no ciclo pela data de chegada (Brasília). Ao chegar a 80% e a 100% da franquia do ciclo, os admins da clínica recebem um e-mail (uma vez por limiar e ciclo). `400` tipo inválido |
 
 ## API interna do produto (chamada pela plataforma)
 
