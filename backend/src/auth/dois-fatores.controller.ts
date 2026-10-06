@@ -34,6 +34,13 @@ export class SenhaDto {
   senha!: string;
 }
 
+export class SenhaCodigoDto extends SenhaDto {
+  @IsString()
+  @MinLength(6)
+  @MaxLength(20)
+  codigo!: string;
+}
+
 export class ExigenciaDto {
   @IsBoolean()
   exigir!: boolean;
@@ -76,10 +83,26 @@ export class DoisFatoresController {
   @HttpCode(HttpStatus.NO_CONTENT)
   desligar(
     @CurrentUser() u: ITokenPayload,
-    @Body() dto: SenhaDto,
+    @Body() dto: SenhaCodigoDto,
     @Req() req: Request,
   ): Promise<void> {
-    return this.doisFatores.desligar(u, dto.senha, contextoDe(req));
+    return this.doisFatores.desligar(u, dto.senha, dto.codigo, contextoDe(req));
+  }
+
+  /** Códigos de recuperação novos (senha + código do app); os antigos deixam de valer. */
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @Post('recuperacao')
+  novosCodigos(
+    @CurrentUser() u: ITokenPayload,
+    @Body() dto: SenhaCodigoDto,
+    @Req() req: Request,
+  ) {
+    return this.doisFatores.novosCodigos(
+      u,
+      dto.senha,
+      dto.codigo,
+      contextoDe(req),
+    );
   }
 
   @ExigeAcesso(PAPEL_ADMIN)

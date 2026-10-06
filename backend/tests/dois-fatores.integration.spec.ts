@@ -54,6 +54,15 @@ describeDb('Verificação em duas etapas (integração)', () => {
       ids[nome] = p.id;
       await criarAcesso(ds, { usuarioId: p.id, tenantId, papel });
     }
+    // Recepção com vínculo de profissional de saúde (vê prontuário).
+    const cli = await criarPessoa(ds, { email: 'cli@2fa.com', nome: 'cli' });
+    ids.cli = cli.id;
+    await criarAcesso(ds, {
+      usuarioId: cli.id,
+      tenantId: T1,
+      papel: 'recepcao',
+      clinico: true,
+    });
   });
 
   afterAll(() => fecharApp(app));
@@ -192,20 +201,74 @@ describeDb('Verificação em duas etapas (integração)', () => {
     await codigo(d, await proximoCodigo('lim')).expect(429);
   });
 
-  it('desligar: senha errada → 400; certa → login volta a ser direto (auditado)', async () => {
+  /**
+   * Os testes anteriores erram códigos de propósito e gastam os passos da
+   * janela de 30 s: zera o limite e o último passo usado.
+   */
+  async function recomecar(nome: string) {
+    await ds.query(
+      `DELETE FROM crommos.rate_limit WHERE chave LIKE '2fa-falha:%'`,
+    );
+    await ds.query(
+      'UPDATE crommos.usuarios SET totp_ultimo_passo = NULL WHERE id = $1',
+      [ids[nome]],
+    );
+  }
+
+  it('novos códigos de recuperação: pede senha e código do app; os antigos deixam de valer (auditado)', async () => {
+    await recomecar('ana');
     const d = (await login('ana')).body.doisFatores.desafio as string;
     const r = await codigo(d, await proximoCodigo('ana')).expect(200);
     const auth = `Bearer ${r.body.accessToken as string}`;
-    await http()
-      .post('/auth/2fa/desligar')
-      .set('Authorization', auth)
-      .send({ senha: 'errada-123' })
-      .expect(400);
-    await http()
-      .post('/auth/2fa/desligar')
-      .set('Authorization', auth)
-      .send({ senha: SENHA })
-      .expect(204);
+    const gerar = (body: object) =>
+      http()
+        .post('/auth/2fa/recuperacao')
+        .set('Authorization', auth)
+        .send(body);
+    await gerar({ senha: SENHA }).expect(400); // sem código
+    await gerar({
+      senha: 'errada-123',
+      codigo: await proximoCodigo('ana'),
+    }).expect(400);
+    // Código de recuperação não gera outros (precisa do celular).
+    await gerar({ senha: SENHA, codigo: recuperacao[2] }).expect(400);
+    const ok = await gerar({
+      senha: SENHA,
+      codigo: await proximoCodigo('ana'),
+    }).expect(201);
+    const novos = ok.body.codigosRecuperacao as string[];
+    expect(novos).toHaveLength(10);
+    expect(novos).not.toContain(recuperacao[3]);
+
+    const d2 = (await login('ana')).body.doisFatores.desafio as string;
+    await codigo(d2, recuperacao[3]).expect(400); // antigo: não vale mais
+    await codigo(d2, novos[0]).expect(200);
+    const [a] = await ds.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM crommos.auditoria
+        WHERE usuario_id = $1 AND action = '2fa-recuperacao-gerada'`,
+      [ids.ana],
+    );
+    expect(a.n).toBe(1);
+    recuperacao = novos.slice(1);
+  });
+
+  it('desligar: pede senha e código; senha ou código errados → 400; certos → login volta a ser direto (auditado)', async () => {
+    await recomecar('ana');
+    const d = (await login('ana')).body.doisFatores.desafio as string;
+    const r = await codigo(d, await proximoCodigo('ana')).expect(200);
+    const auth = `Bearer ${r.body.accessToken as string}`;
+    const desligar = (body: object) =>
+      http().post('/auth/2fa/desligar').set('Authorization', auth).send(body);
+    await desligar({ senha: SENHA }).expect(400); // sem código
+    await desligar({
+      senha: 'errada-123',
+      codigo: await proximoCodigo('ana'),
+    }).expect(400);
+    await desligar({ senha: SENHA, codigo: '000000' }).expect(400);
+    await desligar({
+      senha: SENHA,
+      codigo: await proximoCodigo('ana'),
+    }).expect(204);
     await entrar('ana');
     const [a] = await ds.query<{ n: number }[]>(
       `SELECT count(*)::int AS n FROM crommos.auditoria
@@ -223,11 +286,28 @@ describeDb('Verificação em duas etapas (integração)', () => {
       .send({ exigir: true })
       .expect(403);
     const adm = await entrar('adm');
+    // Conectados antes da exigência: quem é cobrado e não tem 2FA sai.
+    const conectado = async (nome: string) =>
+      cookieRefresh((await login(nome).expect(200)).headers);
+    const [cPro, cCli, cRec] = [
+      await conectado('pro'),
+      await conectado('cli'),
+      await conectado('rec'),
+    ];
+    const outraClinica = await conectado('out');
     await http()
       .patch('/auth/2fa/clinica')
       .set('Authorization', adm)
       .send({ exigir: true })
       .expect(200);
+    const refresh = (c: string) =>
+      http().post('/auth/refresh').set('Cookie', c);
+    await refresh(cPro).expect(401);
+    await refresh(cCli).expect(401);
+    await refresh(cRec).expect(200); // recepção sem prontuário: segue
+    await refresh(outraClinica).expect(200); // outra clínica: segue
+    // Quem ligou a exigência continua (configura no próximo login).
+    await http().get('/auth/2fa').set('Authorization', adm).expect(200);
 
     await entrar('rec'); // papel sem prontuário: direto
     const r1 = await login('pro').expect(200);
@@ -244,7 +324,7 @@ describeDb('Verificação em duas etapas (integração)', () => {
     await http()
       .post('/auth/2fa/desligar')
       .set('Authorization', pro)
-      .send({ senha: SENHA })
+      .send({ senha: SENHA, codigo: await proximoCodigo('pro') })
       .expect(409);
 
     const clin = await http()

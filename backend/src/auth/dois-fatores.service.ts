@@ -205,26 +205,54 @@ export class DoisFatoresService {
     return { codigosRecuperacao: await this.ligar(user.sub, ctx, user) };
   }
 
-  /** Desliga o próprio 2FA (pede a senha); não quando a clínica exige. */
+  /**
+   * Desliga o próprio 2FA: pede a senha e o código (do app ou de
+   * recuperação — quem perdeu o celular ainda desliga); não quando a
+   * clínica exige.
+   */
   async desligar(
     user: ITokenPayload,
     senha: string,
+    codigo: string,
     ctx: ContextoAcesso,
   ): Promise<void> {
-    const [u] = await this.ds.query<{ hash: string }[]>(
-      'SELECT password_hash AS hash FROM crommos.usuarios WHERE id = $1',
-      [user.sub],
-    );
-    if (!u || !(await conferirSenha(senha, u.hash))) {
-      throw new BadRequestException('Senha incorreta.');
-    }
+    await this.conferirSenha(user.sub, senha);
     if (await this.exigidoDe(user)) {
       throw new ConflictException(
         'A sua clínica exige a verificação em duas etapas para o seu perfil.',
       );
     }
+    await this.exigirCodigo(user, codigo, true, ctx);
     await this.limpar(user.sub);
     await this.registrar(user, '2fa-desligado', ctx);
+  }
+
+  /**
+   * Códigos de recuperação novos (os antigos deixam de valer). Pede a senha
+   * e o código do app — não um de recuperação: quem não tem o celular
+   * desliga e configura de novo.
+   */
+  async novosCodigos(
+    user: ITokenPayload,
+    senha: string,
+    codigo: string,
+    ctx: ContextoAcesso,
+  ): Promise<{ codigosRecuperacao: string[] }> {
+    await this.conferirSenha(user.sub, senha);
+    if (!(await this.linha(user.sub)).ativo) {
+      throw new ConflictException(
+        'A verificação em duas etapas está desligada.',
+      );
+    }
+    await this.exigirCodigo(user, codigo, false, ctx);
+    const codigos = gerarCodigosRecuperacao();
+    await this.ds.query(
+      `UPDATE crommos.usuarios SET totp_recuperacao = $2, updated_at = now()
+        WHERE id = $1`,
+      [user.sub, codigos.map((c) => sha256(normalizarRecuperacao(c)))],
+    );
+    await this.registrar(user, '2fa-recuperacao-gerada', ctx);
+    return { codigosRecuperacao: codigos };
   }
 
   // ---- admin da clínica ----------------------------------------------------
@@ -258,6 +286,21 @@ export class DoisFatoresService {
         WHERE produto = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
       [user.produto, user.tenantId, exigir],
     );
+    // Quem passa a ser cobrado e ainda não configurou sai das sessões desta
+    // clínica: configura no próximo login. Quem ligou fica (não cai no meio).
+    if (exigir) {
+      await this.ds.query(
+        `UPDATE crommos.sessoes s SET revogada_em = now()
+           FROM crommos.acessos a
+           JOIN crommos.usuarios u ON u.id = a.usuario_id
+          WHERE a.produto = $1 AND a.tenant_id = $2 AND a.ativo
+            AND (a.clinico OR a.papel = ANY($3)) AND u.totp_ativo_em IS NULL
+            AND a.usuario_id <> $4
+            AND s.usuario_id = a.usuario_id AND s.produto = $1
+            AND s.tenant_id = $2 AND s.revogada_em IS NULL`,
+        [user.produto, user.tenantId, PAPEIS_2FA_EXIGIVEL, user.sub],
+      );
+    }
     await this.audit.registrar({
       ...ctx,
       usuarioId: user.sub,
@@ -319,6 +362,32 @@ export class DoisFatoresService {
   }
 
   // ---- interno -------------------------------------------------------------
+
+  private async conferirSenha(usuarioId: string, senha: string): Promise<void> {
+    const [u] = await this.ds.query<{ hash: string }[]>(
+      'SELECT password_hash AS hash FROM crommos.usuarios WHERE id = $1',
+      [usuarioId],
+    );
+    if (!u || !(await conferirSenha(senha, u.hash))) {
+      throw new BadRequestException('Senha incorreta.');
+    }
+  }
+
+  /** Código certo ou 400 (não 401: um 401 faria o app tentar renovar a sessão). */
+  private async exigirCodigo(
+    user: ITokenPayload,
+    codigo: string,
+    aceitaRecuperacao: boolean,
+    ctx: ContextoAcesso,
+  ): Promise<void> {
+    if (
+      !(await this.conferir(user.sub, codigo, aceitaRecuperacao, ctx, user))
+    ) {
+      throw new BadRequestException(
+        'Código incorreto. Confira o app autenticador e tente de novo.',
+      );
+    }
+  }
 
   private async linha(usuarioId: string): Promise<LinhaTotp> {
     const [t] = await this.ds.query<LinhaTotp[]>(
