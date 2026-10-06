@@ -46,7 +46,9 @@ Variáveis (lista completa e validação no boot em
 | `DB_*`, `PORT`, `TZ` | Banco e processo |
 | `FRONTEND_URL`, `API_URL` | Links dos e-mails e da confirmação — **obrigatórias em produção** |
 | `FRONTEND_URLS` | Allowlist de CORS (CSV); vazia = `FRONTEND_URL` |
-| `PLATAFORMA_JWT_PRIVATE_KEY` / `PLATAFORMA_JWT_PUBLIC_KEY` | Par RS256 (o boot confere que fecham) |
+| `PLATAFORMA_JWT_PRIVATE_KEY` / `PLATAFORMA_JWT_PUBLIC_KEY` | Par RS256 (o boot confere que fecham); a `kid` do token é o thumbprint da pública |
+| `PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR` | Só durante a rotação da chave: a pública antiga, aceita pela `kid` (contrato) |
+| `PLATAFORMA_JWT_ISSUER` | `iss` dos tokens (padrão `crommos-plataforma`; igual nos produtos) |
 | `<PRODUTO>_API_URL` + `SERVICO_KEY_<PRODUTO>` | Produto disponível (as duas ou nenhuma; chave ≥ 32 e distinta por produto) |
 | `PROVISIONAMENTO_KEY_<PRODUTO>` | Chave própria do sentido plataforma → produto (no Clinic é a `SERVICO_KEY_PROVISIONAMENTO`); vazia = vale a `SERVICO_KEY_<PRODUTO>` |
 | `DATA_ENCRYPTION_KEY` | Cifra do segredo do 2FA (≥ 32 caracteres, `openssl rand -hex 32`, diferente da do Clinic). Sem ela, ligar o 2FA responde 503 |

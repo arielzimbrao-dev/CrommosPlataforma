@@ -29,7 +29,8 @@ describe('JwtStrategy', () => {
   const sessoes = { sessaoVigente: jest.fn().mockResolvedValue(true) };
   const strategy = new JwtStrategy(
     {
-      getOrThrow: () => process.env.PLATAFORMA_JWT_PUBLIC_KEY,
+      get: () => undefined,
+      getOrThrow: (k: string) => process.env[k],
     } as unknown as ConfigService,
     sessoes as never,
   );
@@ -42,22 +43,24 @@ describe('JwtStrategy', () => {
 
   it('devolve só as claims do contrato de um access', async () => {
     await expect(
-      strategy.validate({ ...base, extra: 1 } as never),
+      strategy.validate({ ...base, aud: 'clinic', extra: 1 } as never),
     ).resolves.toEqual(base);
     // Sem sid (token antigo): não consulta a sessão.
     expect(sessoes.sessaoVigente).not.toHaveBeenCalled();
   });
 
   it('com sid, confere a sessão; família encerrada → 401', async () => {
-    await expect(strategy.validate({ ...base, sid: 's1' })).resolves.toEqual({
+    await expect(
+      strategy.validate({ ...base, aud: 'clinic', sid: 's1' }),
+    ).resolves.toEqual({
       ...base,
       sid: 's1',
     });
     expect(sessoes.sessaoVigente).toHaveBeenCalledWith('s1', 'u1');
     sessoes.sessaoVigente.mockResolvedValueOnce(false);
-    await expect(strategy.validate({ ...base, sid: 's1' })).rejects.toThrow(
-      'Sessão encerrada.',
-    );
+    await expect(
+      strategy.validate({ ...base, aud: 'clinic', sid: 's1' }),
+    ).rejects.toThrow('Sessão encerrada.');
   });
 
   it.each([
@@ -65,9 +68,11 @@ describe('JwtStrategy', () => {
     ['sem tenantId', { tenantId: '' }],
     ['sem sub', { sub: '' }],
     ['produto desconhecido', { produto: 'x' }],
+    ['aud de outro produto', { aud: 'vet' }],
+    ['sem aud', { aud: undefined }],
   ])('recusa %s', async (_c, over) => {
     await expect(
-      strategy.validate({ ...base, ...over } as never),
+      strategy.validate({ ...base, aud: 'clinic', ...over } as never),
     ).rejects.toThrow(UnauthorizedException);
   });
 });

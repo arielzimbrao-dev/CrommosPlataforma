@@ -79,6 +79,31 @@ describe('validateEnv', () => {
     ).toThrow(/PEM válidos/);
   });
 
+  it('rotação: PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR é RSA válida e diferente da atual; PLATAFORMA_JWT_ISSUER opcional', () => {
+    const anterior = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    expect(() =>
+      validateEnv({
+        ...valido(),
+        PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR: anterior.publicKey,
+        PLATAFORMA_JWT_ISSUER: 'crommos-plataforma',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateEnv({ ...valido(), PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR: 'lixo' }),
+    ).toThrow(/PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR/);
+    expect(() =>
+      validateEnv({
+        ...valido(),
+        PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR:
+          process.env.PLATAFORMA_JWT_PUBLIC_KEY,
+      }),
+    ).toThrow(/PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR/);
+  });
+
   it('produto: URL e chave vão juntas; chave ≥ 32; chaves distintas entre produtos', () => {
     expect(() =>
       validateEnv({

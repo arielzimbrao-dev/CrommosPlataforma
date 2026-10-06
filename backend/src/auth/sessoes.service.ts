@@ -83,12 +83,13 @@ export class SessoesService {
       { ...base, typ: 'access', sid: familia },
       {
         expiresIn: expiresIn(this.config.get<string>('JWT_EXPIRES_IN', '15m')),
+        audience: alvo.produto,
       },
     );
     const ttl = this.config.get<string>('JWT_REFRESH_EXPIRES_IN', '7d');
     const refreshToken = await this.jwt.signAsync(
       { ...base, typ: 'refresh', jti },
-      { expiresIn: expiresIn(ttl) },
+      { expiresIn: expiresIn(ttl), audience: alvo.produto },
     );
     await this.sessoes.insert({
       jti,

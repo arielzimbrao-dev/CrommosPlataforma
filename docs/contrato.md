@@ -7,7 +7,20 @@
 
 - Assinado pela plataforma (`PLATAFORMA_JWT_PRIVATE_KEY`, PEM). Produtos verificam com
   `PLATAFORMA_JWT_PUBLIC_KEY` (PEM). Algoritmo fixo `RS256`.
-- **Access** (15 min): `{ sub: <usuarioId>, produto: 'clinic'|'odonto'|'vet', tenantId: <uuid>, typ: 'access', sid: <uuid> }`.
+- **`iss`, `aud` e `kid`** em todo token (access, refresh e desafio do 2FA):
+  - `iss` = `PLATAFORMA_JWT_ISSUER` (padrão `crommos-plataforma`; o mesmo valor nos dois lados).
+  - `aud` = o produto do acesso (`'clinic'|'odonto'|'vet'`, igual a `produto`). O produto exige
+    `aud` = ele mesmo; a plataforma exige `aud` ∈ produtos e `aud` = `produto`.
+  - `kid` (cabeçalho) = thumbprint RFC 7638 da chave pública (SHA-256 do JWK `{e,kty,n}`,
+    base64url, 43 caracteres). Cada lado calcula a partir do PEM que já tem — nada a configurar.
+  - Token sem `kid`, com `kid` desconhecida, sem `aud`/`iss` ou com valores errados → `401`.
+    Sem período de transição: tokens emitidos antes desta versão deixam de valer (pré-lançamento;
+    o access vive 15 min e o refresh antigo só obriga a entrar de novo).
+- **Rotação da chave:** a plataforma assina **só** com a atual; plataforma e produtos aceitam
+  também `PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR` (escolhida pela `kid`) enquanto ela estiver
+  configurada. Passo a passo em `crommos-clinic/docs/15-deploy-coolify.md` ("Chave dos tokens —
+  rotação").
+- **Access** (15 min): `{ sub: <usuarioId>, produto: 'clinic'|'odonto'|'vet', tenantId: <uuid>, typ: 'access', sid: <uuid>, iss, aud }`, cabeçalho `{ alg: 'RS256', kid }`.
 - **`sid`:** a **família** da sessão — o `jti` da 1ª sessão do login, herdado a cada
   rotação do refresh (`crommos.sessoes.familia`). O access só vale enquanto a família tiver uma
   sessão vigente: `EXISTS (SELECT 1 FROM crommos.sessoes WHERE familia = :sid AND usuario_id = :sub
@@ -17,7 +30,7 @@
   e reuso de refresh derrubam o access **na hora**. **Transição:** access sem `sid` (emitido antes
   desta versão) é aceito até expirar (≤ 15 min).
 - **Refresh** (7 dias, cookie httpOnly `crommos_rt`, path `/auth`, na origem da plataforma):
-  `{ sub, produto, tenantId, typ: 'refresh', jti }`; uma sessão por `jti` em `crommos.sessoes`
+  `{ sub, produto, tenantId, typ: 'refresh', jti, iss, aud }` (com `kid`); uma sessão por `jti` em `crommos.sessoes`
   (hash do token), rotação a cada refresh.
 - Papel e unidades **não** vão no token: o produto resolve o vínculo local a cada requisição.
 - O produto recusa token com `produto` diferente do seu.

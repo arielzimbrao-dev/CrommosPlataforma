@@ -119,7 +119,7 @@ export class DoisFatoresService {
         tenantId: alvo.tenantId,
         typ: '2fa',
       } satisfies Claims2fa,
-      { expiresIn: DESAFIO_TTL },
+      { expiresIn: DESAFIO_TTL, audience: alvo.produto },
     );
     return { doisFatores: { desafio, ...(configurar ? { configurar } : {}) } };
   }

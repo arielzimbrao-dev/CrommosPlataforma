@@ -7,7 +7,7 @@ import { Acesso } from 'src/auth/acesso.entity';
 import { AuthController } from 'src/auth/auth.controller';
 import { gerarConfirmacaoEmail } from 'src/auth/tokens';
 import { Usuario } from 'src/auth/usuario.entity';
-import { normalizarPem } from 'src/auth/chaves-jwt';
+import { kidDaChave, kidDoToken, normalizarPem } from 'src/auth/chaves-jwt';
 import {
   criarApp,
   fecharApp,
@@ -107,6 +107,13 @@ describeDb('Auth (integração)', () => {
         tenantId: T1,
         typ: 'access',
       });
+      expect(claims).toMatchObject({
+        iss: 'crommos-plataforma',
+        aud: 'clinic',
+      });
+      expect(kidDoToken(res.body.accessToken)).toBe(
+        kidDaChave(process.env.PLATAFORMA_JWT_PUBLIC_KEY!),
+      );
       expect(claims).not.toHaveProperty('papel');
       expect(Number(claims.exp) - Number(claims.iat)).toBe(15 * 60);
     });
@@ -515,9 +522,40 @@ describeDb('Auth (integração)', () => {
         .get(JwtService)
         .signAsync(
           { sub: ana.id, produto: 'clinic', tenantId: T1, typ: 'access' },
-          { expiresIn: '15m' },
+          { expiresIn: '15m', audience: 'clinic' },
         );
       await modulos(semSid).expect(200);
+    });
+
+    it('access sem kid, sem aud ou com iss de outro emissor → 401', async () => {
+      const claims = {
+        sub: ana.id,
+        produto: 'clinic',
+        tenantId: T1,
+        typ: 'access',
+      };
+      const assinar = (opcoes: Record<string, unknown>) =>
+        new JwtService().sign(
+          claims,
+          // undefined = sem a claim (o jsonwebtoken recusa opção undefined)
+          JSON.parse(
+            JSON.stringify({
+              algorithm: 'RS256',
+              privateKey: normalizarPem(
+                process.env.PLATAFORMA_JWT_PRIVATE_KEY!,
+              ),
+              expiresIn: '15m',
+              keyid: kidDaChave(process.env.PLATAFORMA_JWT_PUBLIC_KEY!),
+              issuer: 'crommos-plataforma',
+              audience: 'clinic',
+              ...opcoes,
+            }),
+          ),
+        );
+      await modulos(assinar({})).expect(200);
+      await modulos(assinar({ keyid: undefined })).expect(401);
+      await modulos(assinar({ audience: undefined })).expect(401);
+      await modulos(assinar({ issuer: 'outro' })).expect(401);
     });
   });
 

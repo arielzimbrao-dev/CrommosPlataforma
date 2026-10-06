@@ -4,8 +4,23 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PRODUTOS } from '../common/produtos';
 import { ITokenPayload } from '../common/interfaces/token-payload.interface';
-import { normalizarPem } from './chaves-jwt';
+import { ChavesJwt, chavesJwt, chaveDoToken } from './chaves-jwt';
 import { SessoesService } from './sessoes.service';
+
+/** `iss`, `aud` ∈ produtos e a pública escolhida pela `kid` (atual ou anterior). */
+const verificacao = (c: ChavesJwt) => ({
+  issuer: c.emissor,
+  audience: [...PRODUTOS],
+  secretOrKeyProvider: (
+    _req: unknown,
+    token: string,
+    done: (erro: Error | null, chave?: string) => void,
+  ) => {
+    const chave = chaveDoToken(c, token);
+    if (chave) done(null, chave);
+    else done(new UnauthorizedException('Token inválido.'));
+  },
+});
 
 /**
  * Valida o **access token** (Bearer, RS256 com a chave pública da
@@ -20,10 +35,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: normalizarPem(
-        config.getOrThrow<string>('PLATAFORMA_JWT_PUBLIC_KEY'),
-      ),
       algorithms: ['RS256'],
+      ...verificacao(chavesJwt(config)),
     });
   }
 
@@ -33,7 +46,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       !payload?.sub ||
       !payload.tenantId ||
       !PRODUTOS.includes(payload.produto) ||
-      payload.typ !== 'access'
+      payload.typ !== 'access' ||
+      payload.aud !== payload.produto
     ) {
       throw new UnauthorizedException('Token inválido.');
     }

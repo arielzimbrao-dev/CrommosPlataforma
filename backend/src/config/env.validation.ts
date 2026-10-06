@@ -13,7 +13,7 @@ import {
   ValidateIf,
   validateSync,
 } from 'class-validator';
-import { erroNoParDeChaves } from '../auth/chaves-jwt';
+import { erroNaChaveAnterior, erroNoParDeChaves } from '../auth/chaves-jwt';
 import { PRODUTOS } from '../common/produtos';
 
 /**
@@ -150,6 +150,20 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   PLATAFORMA_JWT_PUBLIC_KEY!: string;
+
+  /**
+   * Rotação: a pública ANTERIOR, aceita (pela `kid`) até os tokens antigos
+   * expirarem (7 dias, o refresh). Fora da troca, vazia.
+   */
+  @IsOptional()
+  @IsString()
+  PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR?: string;
+
+  /** `iss` dos tokens (padrão `crommos-plataforma`); igual nos produtos. */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  PLATAFORMA_JWT_ISSUER?: string;
 
   @IsOptional()
   @IsString()
@@ -304,10 +318,15 @@ export function validateEnv(
     );
   }
 
-  const erroChaves = erroNoParDeChaves(
-    validated.PLATAFORMA_JWT_PRIVATE_KEY,
-    validated.PLATAFORMA_JWT_PUBLIC_KEY,
-  );
+  const erroChaves =
+    erroNoParDeChaves(
+      validated.PLATAFORMA_JWT_PRIVATE_KEY,
+      validated.PLATAFORMA_JWT_PUBLIC_KEY,
+    ) ??
+    erroNaChaveAnterior(
+      validated.PLATAFORMA_JWT_PUBLIC_KEY_ANTERIOR,
+      validated.PLATAFORMA_JWT_PUBLIC_KEY,
+    );
   if (erroChaves) throw falha(erroChaves);
 
   const v = validated as unknown as Record<string, string | undefined>;

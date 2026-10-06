@@ -20,4 +20,8 @@ export interface ITokenPayload {
    * `sid`, valem até expirar (transição, ≤ 15 min).
    */
   sid?: string;
+  /** Emissor (`PLATAFORMA_JWT_ISSUER`, padrão `crommos-plataforma`). */
+  iss?: string;
+  /** = `produto` (o produto recusa token emitido para outro). */
+  aud?: string;
 }
